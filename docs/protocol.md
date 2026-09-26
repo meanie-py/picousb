@@ -45,6 +45,10 @@ Errors: 0 success, 1 protocol, 2 authentication, 3 capacity, 4 busy, 5 offline,
 6 I/O, 7 timeout (reserved), 8 invalid arguments. Errors contain no secret,
 payload excerpt, local path, or exception text. Local Python failures use
 `DevBoxError` with a numeric `code`; local request deadlines raise `TimeoutError`.
+The Python deadline includes waiting to send. A timed-out or cancelled control
+request closes the connection because the device may already have applied it;
+call `reconnect()` and explicitly reattach storage before continuing. This does
+not roll back completed writes or input already delivered to the USB host.
 
 ## Authentication and status
 
@@ -157,8 +161,12 @@ volume while mounted; host changes make export fail. Internal state is excluded
 from the FAT view. Images live on the host, not in Pico RAM/flash.
 
 A flush/eject validates the complete graph before exporting files and deletions.
+If the validated names and content hashes match the host baseline, publication
+is skipped, preserving ordinary-file identity and timestamps. The image is still
+fsynced and host changes and malformed FAT metadata are still rejected.
 It stages content and a recovery marker before changing the ordinary directory.
-If publication is interrupted, `.picousb/export-pending.json` blocks reattachment;
+If publication is interrupted, `.picousb/export-pending.json` blocks subsequent
+exports as well as reattachment;
 the stage, backups, and image remain available for explicit recovery. Successful
 exports remove staging and backup copies. A process crash may leave `.picousb/lock`;
 remove only that lock after confirming no process owns the volume. Do not delete

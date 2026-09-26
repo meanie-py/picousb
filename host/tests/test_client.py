@@ -92,6 +92,50 @@ async def test_timeout() -> None:
         assert box.ws is None
 
 
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_uncertain_command_closes_session(cancel: bool) -> None:
+    command_received = asyncio.Event()
+    disconnected = asyncio.Event()
+
+    async def handle(ws: ServerConnection) -> None:
+        auth = Message.decode(await ws.recv())
+        await ws.send(Message(Op.AUTH | RESPONSE, auth.id, 42).encode())
+        await ws.recv()  # Applied command, but its acknowledgment never arrives.
+        command_received.set()
+        await ws.wait_closed()
+        disconnected.set()
+
+    async with serve(handle, "127.0.0.1", 0) as server:
+        async with DevBox(
+            f"ws://127.0.0.1:{server.sockets[0].getsockname()[1]}", timeout=0.1
+        ) as box:
+            command = asyncio.create_task(box.keyboard.key_down("SHIFT"))
+            await asyncio.wait_for(command_received.wait(), 2)
+            if cancel:
+                command.cancel()
+            with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
+                await command
+            await asyncio.wait_for(disconnected.wait(), 0.5)
+            assert not box._pending
+
+
+async def test_request_deadline_includes_send_lock(fake: tuple[str, list[Message]]) -> None:
+    async with DevBox(fake[0], "synthetic-test-token", timeout=0.05) as box:
+        async with box._send_lock:
+            request = asyncio.create_task(box.status())
+            try:
+                done, _ = await asyncio.wait({request}, timeout=0.5)
+                assert request in done, "request deadline did not cover the send phase"
+                with pytest.raises(TimeoutError):
+                    await request
+                assert not box._pending
+            finally:
+                if not request.done():
+                    request.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await request
+
+
 async def test_storage_end_to_end(tmp_path: Path) -> None:
     finished = asyncio.Event()
     responses: list[Message] = []

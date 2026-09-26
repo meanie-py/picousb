@@ -85,6 +85,7 @@ class DirectoryDisk:
                 "volume locked; after a crash confirm no server is running before removing .picousb/lock"
             ) from None
         os.close(fd)
+        self._owns_lock = True
         self.file: BinaryIO | None = None
         try:
             if (self.state / "export-pending.json").exists():
@@ -284,6 +285,8 @@ class DirectoryDisk:
         interrupted. Such a volume requires explicit recovery before reattach.
         """
         f = self._io()
+        if (self.state / "export-pending.json").exists():
+            raise StorageError("interrupted export: preserve .picousb and recover before serving")
         os.fsync(f.fileno())
         if self._scan() != self._baseline:
             raise StorageError("host directory changed while target owned volume")
@@ -416,11 +419,30 @@ class DirectoryDisk:
             spellings[name] = actual
             self._path(actual)
             translated[actual] = value
-        stage = Path(tempfile.mkdtemp(prefix="export-", dir=self.state))
+        # Compare validated image contents before staging: ordinary flushes must
+        # not rewrite unchanged files or change their identity and timestamps.
         new_manifest: dict[str, str | None] = {}
         for name, value in translated.items():
             if value is None:
                 new_manifest[name] = None
+                continue
+            cs, size = value
+            digest = hashlib.sha256()
+            for c in cs:
+                f.seek(DATA_START * 512 + (c - 2) * CLUSTER_BYTES)
+                length = min(size, CLUSTER_BYTES)
+                chunk = f.read(length)
+                if len(chunk) != length:
+                    raise StorageError("short image read during export")
+                size -= length
+                digest.update(chunk)
+            new_manifest[name] = digest.hexdigest()
+        if new_manifest == self._baseline:
+            return
+
+        stage = Path(tempfile.mkdtemp(prefix="export-", dir=self.state))
+        for name, value in translated.items():
+            if value is None:
                 continue
             cs, size = value
             target = stage / name
@@ -429,13 +451,17 @@ class DirectoryDisk:
             with target.open("wb") as out:
                 for c in cs:
                     f.seek(DATA_START * 512 + (c - 2) * CLUSTER_BYTES)
-                    chunk = f.read(min(size, CLUSTER_BYTES))
+                    length = min(size, CLUSTER_BYTES)
+                    chunk = f.read(length)
+                    if len(chunk) != length:
+                        raise StorageError("short image read during export")
                     size -= len(chunk)
                     digest.update(chunk)
                     out.write(chunk)
                 out.flush()
                 os.fsync(out.fileno())
-            new_manifest[name] = digest.hexdigest()
+            if digest.hexdigest() != new_manifest[name]:
+                raise StorageError("image changed during export")
         backup = Path(tempfile.mkdtemp(prefix="backup-", dir=self.state))
         pending = self.state / "export-pending.json"
         with pending.open("w") as journal:
@@ -485,4 +511,6 @@ class DirectoryDisk:
         if self.file is not None:
             self.file.close()
             self.file = None
-        self.lock.unlink(missing_ok=True)
+        if self._owns_lock:
+            self.lock.unlink(missing_ok=True)
+            self._owns_lock = False

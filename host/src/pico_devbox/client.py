@@ -267,11 +267,20 @@ class DevBox:
         future: asyncio.Future[Message] = asyncio.get_running_loop().create_future()
         self._pending[rid] = (op, future)
         try:
-            await self._send(Message(op, rid, self.session, a, b, payload))
-            reply = await asyncio.wait_for(future, self.timeout)
+            async with asyncio.timeout(self.timeout):
+                await self._send(Message(op, rid, self.session, a, b, payload))
+                reply = await future
             if reply.status:
                 raise DevBoxError(reply.status)
             return reply
+        except (TimeoutError, asyncio.CancelledError):
+            # The command may already have changed HID or media state. End the
+            # session so the device releases ownership instead of leaving an
+            # unacknowledged operation active. Reconnection remains explicit.
+            future.cancel()
+            if self.ws is not None:
+                await self.ws.close()
+            raise
         finally:
             self._pending.pop(rid, None)
 
