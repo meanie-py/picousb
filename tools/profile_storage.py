@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import statistics
+import struct
 import tempfile
 import time
 from collections import Counter, deque
@@ -21,6 +22,21 @@ from pico_devbox import DevBox
 from pico_devbox.client import Storage
 from pico_devbox.image import ImageDisk
 from pico_devbox.protocol import DevBoxError, Message, Op
+
+METRIC_NAMES = ("network_read", "network_write", "usb_read", "wifi_poll", "usb_task", "loop")
+METRIC_RECORD = struct.Struct("<IQI8I")
+
+
+def decode_metrics(reply: Message) -> dict[str, dict[str, object]]:
+    if reply.a != 1 or reply.b != len(METRIC_NAMES) or len(reply.payload) != 48 * reply.b:
+        raise ValueError("unsupported metrics layout")
+    result: dict[str, dict[str, object]] = {}
+    for name, fields in zip(METRIC_NAMES, METRIC_RECORD.iter_unpack(reply.payload), strict=True):
+        count, total, maximum, *bins = fields
+        if sum(bins) != count:
+            raise ValueError("invalid metrics counts")
+        result[name] = {"count": count, "total_us": total, "max_us": maximum, "bins": bins}
+    return result
 
 
 def timing(values: list[float] | deque[float]) -> dict[str, float | int]:
@@ -105,6 +121,8 @@ async def device(args: argparse.Namespace) -> None:
                 await box.status()
                 rtt.append(time.perf_counter() - start)
             emit("status_roundtrip", **timing(rtt))
+            if getattr(args, "firmware_metrics", False):
+                emit("firmware_before", counters=decode_metrics(await box.request(Op.METRICS)))
             if args.mode == "network":
                 # STATUS with a payload is rejected after the complete frame is
                 # received. This measures host-to-Pico bytes plus a tiny reply,
@@ -127,6 +145,8 @@ async def device(args: argparse.Namespace) -> None:
                         mib_per_s=round(size * len(samples) / sum(samples) / 1024**2, 3),
                         **timing(samples),
                     )
+                if getattr(args, "firmware_metrics", False):
+                    emit("firmware_after", counters=decode_metrics(await box.request(Op.METRICS)))
                 return
             await box.storage.serve_image(args.image, read_only=True)
             emit("attached_read_only")
@@ -146,6 +166,8 @@ async def device(args: argparse.Namespace) -> None:
                         host_service=timing(service),
                         between_requests=timing(gaps),
                     )
+                if getattr(args, "firmware_metrics", False):
+                    emit("firmware_after", counters=decode_metrics(await box.request(Op.METRICS)))
             finally:
                 emit(
                     "profile_finished", read_bytes=box.storage.read_bytes, errors=box.storage.errors
@@ -159,6 +181,7 @@ def main() -> int:
     parser.add_argument("--url", default="ws://picousb.local:8080/ws")
     parser.add_argument("--config", type=Path, default=Path(".env.flash"))
     parser.add_argument("--image", type=Path)
+    parser.add_argument("--firmware-metrics", action="store_true")
     args = parser.parse_args()
     if args.mode == "device" and args.image is None:
         parser.error("device mode requires --image")

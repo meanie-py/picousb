@@ -56,6 +56,16 @@ int main(void) {
         }
     }
     cyw43_arch_enable_sta_mode();
+#ifdef PICOUSB_WIFI_NO_POWERSAVE
+    if (cyw43_wifi_pm(&cyw43_state, CYW43_NONE_PM)) {
+        printf("{\"event\":\"power_mode_failed\"}\n");
+        /* Do not present a failed experiment as a valid comparison build. */
+        while (true) {
+            tud_task();
+            sleep_ms(1);
+        }
+    }
+#endif
     netif_set_hostname(&cyw43_state.netif[0], "picousb");
     mdns_resp_init();
     mdns_resp_add_netif(&cyw43_state.netif[0], "picousb");
@@ -73,11 +83,18 @@ int main(void) {
     watchdog_hw->scratch[2] = 0;
     watchdog_enable(5000, false);
 #endif
+    uint32_t last_loop = time_us_32();
     for (;;) {
+        uint32_t stamp = time_us_32();
+        db_metric_add(&device.metrics[DB_LOOP], stamp - last_loop);
+        last_loop = stamp;
         phase(1);
         tud_task();
+        db_metric_add(&device.metrics[DB_USB_TASK], time_us_32() - stamp);
         phase(2);
+        stamp = time_us_32();
         cyw43_arch_poll();
+        db_metric_add(&device.metrics[DB_WIFI_POLL], time_us_32() - stamp);
         phase(3);
         usb_reports();
         phase(4);

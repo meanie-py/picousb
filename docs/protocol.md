@@ -56,12 +56,40 @@ not roll back completed writes or input already delivered to the USB host.
 | --- | --- | --- | --- |
 | 1 | authenticate | session=0, A=B=0, payload=UTF-8 DEVICE_TOKEN | new session ID |
 | 2 | status | A=B=0, empty payload | A=media present, B=queued HID reports |
+| 3 | metrics | A=B=0, empty payload | A=layout version 1, B=6 records, 288-byte payload |
 
 When no DEVICE_TOKEN was provisioned, authenticate with an empty payload.
 Authenticated operations require the returned session. Neither token nor Wi-Fi
 credentials are returned. A live status response establishes network connectivity;
 after connection loss network state is known locally by the client. UART startup
 logs report network state codes and assigned IP, never the SSID/password/token.
+
+### Aggregate timing diagnostics
+
+Authenticated operation 3 returns counters since boot without resetting them.
+Older firmware rejects the operation with error 8. Each 48-byte record has
+little-endian layout `<IQI8I`: count (u32), total microseconds (u64), maximum
+microseconds (u32), and eight non-overlapping histogram counts (u32 each).
+Bins are <=100 us, <=1 ms, <=5 ms, <=10 ms, <=25 ms, <=50 ms, <=100 ms, and
+>100 ms. Sampling stops at count UINT32_MAX rather than wrapping. No payload
+data, addresses, filenames, or configuration values are included.
+
+Records, in order:
+
+1. Successful read: USB callback starting the remote request to validated host reply.
+2. Successful write: USB callback starting the remote request to validated host reply.
+3. Successful USB read batch: host reply/async handoff to TinyUSB data completion.
+4. Duration of `cyw43_arch_poll()`.
+5. Duration of `tud_task()`.
+6. Start-to-start main-loop interval, including sleep and other loop work.
+
+USB batch timing includes deferred dispatch and main-loop scheduling; it is not
+wire time alone. Aborted/failed operations do not produce successful batch
+samples. Counter differences isolate a test interval; maxima remain since-boot
+maxima. Unsigned timer subtraction handles a microsecond timer wrap; valid
+samples must span less than its approximately 71-minute period. Metrics calls
+are ordinary authenticated control traffic: query before/after a measurement,
+not repeatedly during it. `tools/profile_storage.py --firmware-metrics` does so.
 
 ## HID
 

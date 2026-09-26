@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "metrics.h"
 #define DB_CONFIG_SIZE 4096
 #define DB_HEADER 28
 #define DB_PAYLOAD 16384
@@ -13,6 +14,7 @@ enum { DB_OK, DB_PROTOCOL, DB_AUTH, DB_LIMIT, DB_BUSY, DB_OFFLINE, DB_IO, DB_TIM
 enum {
     DB_AUTH_OP = 1,
     DB_STATUS = 2,
+    DB_METRICS = 3,
     DB_KEY_DOWN = 10,
     DB_KEY_UP,
     DB_KEY_PRESS,
@@ -62,6 +64,7 @@ typedef struct {
     uint32_t session, next_storage, pending_id, deadline;
     uint32_t last_request;
     uint32_t pending_bytes;
+    db_metric metrics[DB_METRIC_COUNT];
 } db_device;
 uint32_t db_crc32(const uint8_t *, size_t);
 bool db_config_read(db_config *, const uint8_t *, size_t);

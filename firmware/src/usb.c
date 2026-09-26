@@ -9,6 +9,8 @@ extern uint32_t diagnostic_phase;
 extern db_device device;
 static uint8_t *read_buffer;
 static bool prevent_removal;
+static bool timing_network, timing_read;
+static uint32_t network_started, read_started;
 static const uint8_t keyboard_desc[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
 static const uint8_t mouse_desc[] = {TUD_HID_REPORT_DESC_MOUSE()};
 static const tusb_desc_device_t desc = {.bLength = sizeof(tusb_desc_device_t),
@@ -124,10 +126,13 @@ bool tud_msc_is_writable_cb(uint8_t lun) {
     return device.media && !device.read_only;
 }
 static int32_t begin(uint8_t op, uint32_t lba, const uint8_t *data, uint32_t n) {
+    uint32_t started = time_us_32();
     if (!db_storage_begin_blocks(&device, op, lba, data, to_ms_since_boot(get_absolute_time()), n)) {
         tud_msc_set_sense(0, SCSI_SENSE_NOT_READY, 0x3a, 0);
         return TUD_MSC_RET_ERROR;
     }
+    timing_network = op == DB_READ || op == DB_WRITE;
+    network_started = started;
     return TUD_MSC_RET_ASYNC;
 }
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t n) {
@@ -182,6 +187,13 @@ int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t cmd[16], void *buf, uint16_t 
 }
 void usb_complete(void *ctx, bool ok, const uint8_t *data, size_t n) {
     (void)ctx;
+    uint32_t now = time_us_32();
+    if (timing_network && ok)
+        db_metric_add(&device.metrics[device.pending_op == DB_READ ? DB_NET_READ : DB_NET_WRITE],
+                      now - network_started);
+    timing_network = false;
+    timing_read = ok && read_buffer && n == device.pending_bytes;
+    read_started = now;
     if (ok && read_buffer && n == device.pending_bytes)
         memcpy(read_buffer, data, n);
     read_buffer = NULL;
@@ -191,8 +203,17 @@ void usb_complete(void *ctx, bool ok, const uint8_t *data, size_t n) {
         device.media = false;
     tud_msc_async_io_done(ok ? (device.pending_op <= DB_WRITE ? (int32_t)device.pending_bytes : 1) : -1, false);
 }
+/* Pinned TinyUSB hook: data-stage completion for EACH read batch, before
+ * requesting the next one. Includes async dispatch and main-loop scheduling. */
+void tud_msc_read_batch_complete_cb(uint32_t bytes) {
+    (void)bytes;
+    if (timing_read)
+        db_metric_add(&device.metrics[DB_USB_READ], time_us_32() - read_started);
+    timing_read = false;
+}
 /* Patched TinyUSB calls this before invalidating an outstanding BOT operation. */
 void tud_msc_abort_cb(void) {
+    timing_network = timing_read = false;
     read_buffer = NULL;
     if (device.pending)
         device.media = false;

@@ -247,7 +247,40 @@ static void image_test(void) {
     assert(db_receive(&d, buf, db_encode(buf, &m)));
     assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT);
 }
+static void metrics_test(void) {
+    db_config c = {0};
+    db_device d;
+    db_init(&d, &c, send, complete, NULL);
+    db_connect(&d);
+    uint8_t buf[DB_MAX];
+    db_message m = {.op = DB_METRICS, .id = 1, .session = d.session}, r;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_AUTH && !r.length);
+    d.authenticated = true;
+    const uint32_t samples[] = {100, 101, 1000, 1001, 5000, 5001, 10000,
+                               10001, 25000, 25001, 50000, 50001, 100000, 100001};
+    for (unsigned i = 0; i < sizeof(samples)/sizeof(samples[0]); i++)
+        db_metric_add(&d.metrics[DB_NET_READ], samples[i]);
+    assert(d.metrics[0].count == 14 && d.metrics[0].maximum == 100001);
+    assert(d.metrics[0].bins[0] == 1 && d.metrics[0].bins[7] == 1);
+    for (unsigned i = 1; i < 7; i++) assert(d.metrics[0].bins[i] == 2);
+    d.metrics[0].total = UINT64_C(0x100000002);
+    m.id++;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && !r.status && r.a == 1 && r.b == 6 && r.length == 288);
+    assert(r.data[0] == 14 && r.data[4] == 2 && r.data[8] == 1);
+    m.id++; m.a = 1;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT && !r.length);
+    d.metrics[0].count = UINT32_MAX;
+    uint64_t total = d.metrics[0].total;
+    db_metric_add(&d.metrics[0], 123);
+    assert(d.metrics[0].count == UINT32_MAX && d.metrics[0].total == total);
+    db_disconnect(&d);
+    assert(d.metrics[0].total == total); /* counters survive sessions */
+}
 int main(void) {
+    metrics_test();
     config_test();
     hid_test();
     protocol_test();

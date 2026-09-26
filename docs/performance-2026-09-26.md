@@ -70,6 +70,80 @@ build only after collecting that baseline. Preserve one-variable comparisons,
 write acknowledgments, cancellation behavior, and bounded buffers. Instrument
 counts/times only: no authentication payloads, packet dumps, or configuration.
 
+The next baseline firmware adds these aggregate counters through authenticated
+operation 3 (see protocol.md), with no power-management or buffering change.
+Use `--firmware-metrics` with the network/device probes to collect before/after
+snapshots. This instrumentation is software-tested; new hardware measurements
+must be recorded separately after flashing. It adds six fixed-size accumulators
+and a small TinyUSB per-read-batch completion hook, not packet logging.
+
+### Instrumented physical baseline
+
+Flashed the instrumented normal build with default Wi-Fi power management.
+The same disposable read-only volume served a verified 4 MiB application read
+in 21.624 seconds. Including mount traffic and Windows read-ahead, the backend
+served 8,778,240 bytes over 564 read requests (528 were 16 KiB), with no errors.
+Both network and USB firmware counters recorded exactly 564 completions:
+
+| Firmware stage | Total | Mean per batch | Maximum |
+| --- | ---: | ---: | ---: |
+| Remote read request to validated reply | 9.009038 s | 15.974 ms | 1,316.273 ms |
+| Reply/async handoff to USB data completion | 12.928364 s | 22.923 ms | 25.477 ms |
+
+USB timing is 59% of these two accumulated stages, network wait 41%. This is
+not a pure wire-time split: the USB stage includes deferred dispatch and loop
+scheduling, and the network stage includes host service. Most USB batches were
+10–25 ms; network timing had two samples above 100 ms. During the entire measured
+interval, Wi-Fi polling consumed 4.088680 seconds and USB task calls 0.226331
+seconds. Poll CPU time overlaps the network/USB stages; do not add it to them.
+Maximum Wi-Fi poll call since boot was 7.714 ms. Counters reveal no multi-second
+poll call corresponding to the 1.316-second network stall; packet/power/network
+causes are still unresolved. The test ended with successful safe eject.
+
+Build the next one-variable comparison with
+`PICOUSB_WIFI_NO_POWERSAVE=ON bash tools/build.sh`. Normal builds explicitly
+default this option to OFF, avoiding a sticky CMake experiment setting. The
+comparison selects the pinned driver's `CYW43_NONE_PM` after enabling station
+mode (which applies the driver's default); failure to apply it
+leaves USB responsive but does not start networking, so it cannot masquerade
+as a successful comparison.
+
+### Power-saving-disabled physical comparison
+
+Flashed the comparison build. Repeated the same verified 4 MiB application read:
+25.096 seconds, 8,782,336 backend bytes, 565 requests (528 were 16 KiB), zero
+backend errors, and successful safe eject. One extra 4 KiB metadata request
+occurred compared with the baseline.
+
+| Firmware stage | Total | Mean per batch | Maximum |
+| --- | ---: | ---: | ---: |
+| Remote read request to validated reply | 12.539894 s | 22.194 ms | 1,369.898 ms |
+| Reply/async handoff to USB data completion | 12.923680 s | 22.874 ms | 26.987 ms |
+
+The network histogram had five samples above 100 ms. USB time was effectively
+unchanged; disabling power saving did not eliminate the large network stalls or
+improve this run. This is one sequential A/B pair, not randomized evidence that
+power saving is universally faster. Do not promote the experiment to the default.
+The Pico was left on this functioning comparison build with no media attached;
+normal build commands still select default power management.
+
+The measured USB handoff is a substantial fixed part of each sequential batch.
+The pinned TinyUSB RP2 driver already double-buffers bulk IN USB packets; adding
+another USB packet buffer is not the same as overlapping network and USB work.
+The next performance implementation candidate is a bounded read-prefetch buffer
+to overlap those stages. It needs explicit ownership/cancellation tests for BOT
+reset, disconnect, random reads, media replacement, and intervening writes.
+Retain durable write acknowledgment and do not promise a throughput multiplier
+before measuring. Firmware timestamps identify where time is spent, but have
+not yet identified the cause of the intermittent network stalls.
+
+Validation at this checkpoint: 185 Python tests (91.26% host coverage), all three
+native sanitizer suites, Ruff and strict mypy passed. Default and experimental
+Pico 2 W builds and reserved-configuration boundary checks passed. The TinyUSB
+hook was also tested against fresh pinned upstream source, repeated application,
+and upgrade from the existing async patch. These are local checks; no new CI
+success is claimed here.
+
 ## Reproduction
 
 Use the Windows environment with the editable host package installed:

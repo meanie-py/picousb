@@ -4,10 +4,23 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
-from pico_devbox.protocol import DevBoxError, Op
+from pico_devbox.protocol import DevBoxError, Message, Op
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import profile_storage  # noqa: E402
+
+
+def test_metrics_layout_and_64_bit_total():
+    record = profile_storage.METRIC_RECORD.pack(1, 2**32 + 7, 42, 1, 0, 0, 0, 0, 0, 0, 0)
+    reply = Message(Op.METRICS | 128, 1, a=1, b=6, payload=record * 6)
+    assert profile_storage.decode_metrics(reply)["network_read"]["total_us"] == 2**32 + 7
+    for invalid in (
+        Message(Op.METRICS | 128, 1, a=2, b=6, payload=record * 6),
+        Message(Op.METRICS | 128, 1, a=1, b=6, payload=record),
+        Message(Op.METRICS | 128, 1, a=1, b=6, payload=bytes([1]) + bytes(287)),
+    ):
+        with pytest.raises(ValueError):
+            profile_storage.decode_metrics(invalid)
 
 
 @pytest.mark.parametrize("response_code", [8, 6])

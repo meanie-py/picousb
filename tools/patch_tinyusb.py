@@ -11,6 +11,7 @@ def patch(path: Path) -> None:
     text = path.read_text()
     marker = "/* PICOUSB_ASYNC_SCSI_V1 */"
     if marker in text:
+        patch_metrics(path)
         return
     edits = [
         (
@@ -52,6 +53,27 @@ def patch(path: Path) -> None:
     )
     if text.count("  tud_msc_abort_cb();") != 2:
         raise RuntimeError("unexpected reset implementation; patch refused")
+    path.write_text(text)
+    patch_metrics(path)
+
+
+def patch_metrics(path: Path) -> None:
+    text = path.read_text()
+    marker = "/* PICOUSB_READ_BATCH_TIMING_V1 */"
+    if marker in text:
+        return
+    old = "        p_msc->xferred_len += xferred_bytes;\n\n        if ( p_msc->xferred_len >= p_msc->total_len )"
+    new = "        tud_msc_read_batch_complete_cb(xferred_bytes);\n" + old
+    declaration = "bool mscd_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t event, uint32_t xferred_bytes) {"
+    if text.count(old) != 1 or text.count(declaration) != 1:
+        raise RuntimeError("unexpected TinyUSB data completion; timing patch refused")
+    text = text.replace(
+        declaration,
+        marker
+        + "\nTU_ATTR_WEAK void tud_msc_read_batch_complete_cb(uint32_t bytes) { (void)bytes; }\n\n"
+        + declaration,
+    )
+    text = text.replace(old, new)
     path.write_text(text)
 
 

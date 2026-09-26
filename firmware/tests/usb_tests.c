@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <string.h>
 db_device device;
+uint32_t test_time_us;
 static bool ready = true;
 static uint8_t protocol = HID_PROTOCOL_REPORT, sense;
 static unsigned reports, completions;
@@ -50,6 +51,7 @@ static bool send(void *ctx, const uint8_t *data, size_t n) {
 void usb_complete(void *, bool, const uint8_t *, size_t);
 void usb_reports(void);
 void tud_msc_abort_cb(void);
+void tud_msc_read_batch_complete_cb(uint32_t);
 bool tud_msc_test_unit_ready_cb(uint8_t);
 bool tud_msc_is_writable_cb(uint8_t);
 void tud_msc_capacity_cb(uint8_t, uint32_t *, uint16_t *);
@@ -85,7 +87,15 @@ int main(void) {
     assert(tud_msc_test_unit_ready_cb(0));
     assert(tud_msc_read10_cb(0, 0, 1, buffer, 512) == -1);
     assert(tud_msc_read10_cb(0, 0, 0, buffer, 512) == -2 && device.pending && !completions);
+    test_time_us = 7000;
     usb_complete(NULL, true, payload, 512);
+    assert(device.metrics[DB_NET_READ].count == 1);
+    assert(device.metrics[DB_NET_READ].total == 7000);
+    test_time_us = 19000;
+    tud_msc_read_batch_complete_cb(512);
+    tud_msc_read_batch_complete_cb(512); /* duplicate must not add a sample */
+    assert(device.metrics[DB_USB_READ].count == 1);
+    assert(device.metrics[DB_USB_READ].total == 12000);
     assert(completions == 1 && last_complete == 512 && !memcmp(buffer, payload, 512));
     device.pending = false;
     assert(tud_msc_write10_cb(0, 0, 0, buffer, 512) == -2);
@@ -101,6 +111,8 @@ int main(void) {
     assert(tud_msc_read10_cb(0, 0, 0, buffer, 512) == -2);
     tud_msc_abort_cb();
     assert(!device.pending && !device.media);
+    tud_msc_read_batch_complete_cb(512);
+    assert(device.metrics[DB_USB_READ].count == 1);
     device.media = true;
     tud_msc_abort_cb();
     assert(device.media);
@@ -117,9 +129,12 @@ int main(void) {
     memset(bulk, 0xa7, sizeof(bulk));
     assert(tud_msc_read10_cb(0, capacity - 31, 0, received, sizeof(received)) == -1);
     assert(!device.pending);
+    test_time_us = UINT32_MAX - 99;
     assert(tud_msc_read10_cb(0, capacity - 32, 0, received, sizeof(received)) == -2);
     assert(device.pending_bytes == DB_PAYLOAD);
+    test_time_us = 100;
     usb_complete(NULL, true, bulk, sizeof(bulk));
+    assert(device.metrics[DB_NET_READ].total == 7200); /* timer wraps safely */
     assert(last_complete == DB_PAYLOAD && !memcmp(bulk, received, sizeof(bulk)));
     device.pending = false;
     device.read_only = false;

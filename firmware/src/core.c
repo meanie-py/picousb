@@ -372,6 +372,27 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         r.b = d->hid.count;
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
+    } else if (m.op == DB_METRICS) {
+        if (m.length || m.a || m.b) {
+            r.status = DB_ARGUMENT;
+        } else {
+            uint8_t payload[DB_METRIC_COUNT * 48];
+            for (unsigned i = 0; i < DB_METRIC_COUNT; i++) {
+                const db_metric *v = &d->metrics[i];
+                uint8_t *out = payload + i * 48;
+                put32(out, v->count);
+                put32(out + 4, (uint32_t)v->total);
+                put32(out + 8, (uint32_t)(v->total >> 32));
+                put32(out + 12, v->maximum);
+                for (unsigned j = 0; j < 8; j++)
+                    put32(out + 16 + j * 4, v->bins[j]);
+            }
+            r.a = 1; /* metrics layout version */
+            r.b = DB_METRIC_COUNT;
+            r.length = sizeof(payload);
+            r.data = payload;
+            return send_message(d, &r);
+        }
     } else if (m.op == DB_ATTACH) {
         if (!m.a || m.a > 0x7fffffffu || m.b != 512 ||
             (m.length && (m.length != 1 || m.data[0] > 1)))
