@@ -18,3 +18,4 @@ if [ "$(git -C "$usb" rev-parse HEAD)" != 331c263400dd5ccf77264cab1fa6bbd9f374b4
   git -C "$usb" checkout --detach 331c263400dd5ccf77264cab1fa6bbd9f374b44e
 fi
 python3 tools/patch_tinyusb.py "$usb/src/class/msc/msc_device.c"
+python3 tools/patch_usb_observer.py "$usb/src/device/usbd.c"

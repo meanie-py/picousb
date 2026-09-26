@@ -16,6 +16,20 @@ async def run(args: argparse.Namespace) -> None:
     values = parse_env(args.config.read_text(encoding="utf-8-sig"))
     token = values.pop("DEVICE_TOKEN", "")
     values.clear()
+    if getattr(args, "wait_ready", 0):
+        import json
+
+        box = DevBox(args.url, token=token)
+        try:
+            print(
+                json.dumps(
+                    await box.wait_ready(timeout=args.wait_ready, usb=not args.network_only)
+                ),
+                flush=True,
+            )
+        finally:
+            await box.close()
+        return
     async with DevBox(args.url, token=token, udp_reads=getattr(args, "udp_reads", False)) as box:
         await box.status()
         print("Authenticated device status received.", flush=True)
@@ -53,6 +67,8 @@ def main() -> int:
     media.add_argument("--image", type=Path)
     parser.add_argument("--writable", action="store_true")
     parser.add_argument("--udp-reads", action="store_true")
+    parser.add_argument("--wait-ready", type=float, default=0, metavar="SECONDS")
+    parser.add_argument("--network-only", action="store_true")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     try:

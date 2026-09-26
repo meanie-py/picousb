@@ -19,6 +19,7 @@ int main(void) {
     db_device d;
     db_init(&d, &c, send, done, NULL);
     db_connect(&d);
+    d.usb.mounted = true;
     uint8_t h[2], buf[DB_MAX];
     while (fread(h, 1, 2, stdin) == 2) {
         size_t n = h[0] | ((size_t)h[1] << 8);
@@ -26,8 +27,12 @@ int main(void) {
             return 1;
         if (!db_receive(&d, buf, n))
             return 2;
-        while (d.hid.count)
+        while (d.hid.count) {
+            uint8_t kind = d.hid.queue[d.hid.head].kind;
+            d.hid.counts[kind].submitted++;
+            d.hid.counts[kind].completed++;
             db_hid_pop(&d.hid);
+        }
     }
     return 0;
 }

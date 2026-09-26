@@ -18,6 +18,9 @@ class Op(IntEnum):
     METRICS = 3
     UDP_PROBE = 4
     UDP_READS = 5
+    USB_STATUS = 6
+    RAW_REPORT = 7
+    POINTER = 8
     KEY_DOWN = 10
     KEY_UP = 11
     KEY_PRESS = 12

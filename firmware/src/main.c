@@ -102,6 +102,7 @@ int main(void) {
         uint32_t now = to_ms_since_boot(get_absolute_time());
         int status = cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA);
         bool online = status == CYW43_LINK_UP;
+        if (online && !device.usb.network_ms) device.usb.network_ms = now;
         if (status != previous) {
             phase(5);
             printf("{\"event\":\"network\",\"state\":%d}\n", status);

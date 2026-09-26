@@ -101,6 +101,7 @@ size_t db_encode(uint8_t *p, const db_message *m) {
     return 28 + m->length;
 }
 static void report(db_hid *h, uint8_t kind, int x, int y, int wheel) {
+    h->counts[kind].accepted++;
     db_report *r = &h->queue[(h->head + h->count++) % DB_REPORTS];
     *r = (db_report){.kind = kind,
                      .modifiers = h->modifiers,
@@ -123,9 +124,18 @@ void db_hid_pop(db_hid *h) {
     }
 }
 void db_hid_reset(db_hid *h) {
+    uint32_t epoch = h->epoch + 1;
+    bool pointer_seen = h->pointer_seen;
+    uint8_t pointer[5]; memcpy(pointer, h->pointer, 5); pointer[0] = 0;
     memset(h, 0, sizeof(*h));
+    h->epoch = epoch;
     report(h, 0, 0, 0, 0);
     report(h, 1, 0, 0, 0);
+    if (pointer_seen) {
+        h->pointer_seen = true; memcpy(h->pointer, pointer, 5);
+        report(h, 2, 0, 0, 0);
+        h->queue[2].length = 5; memcpy(h->queue[2].raw, pointer, 5);
+    }
 }
 bool db_ascii(uint8_t ch, uint8_t *key, uint8_t *mod) {
     *mod = 0;
@@ -210,6 +220,30 @@ static int key_change(db_hid *h, uint32_t key, bool down) {
     return DB_OK;
 }
 int db_hid_command(db_hid *h, const db_message *m) {
+    if (m->op == DB_RAW_REPORT || m->op == DB_POINTER) {
+        if (h->count == DB_REPORTS) return DB_BUSY;
+        uint8_t kind = m->op == DB_POINTER ? 2 : (uint8_t)m->a;
+        uint8_t raw[8] = {0};
+        unsigned len = kind == 0 ? 8 : 5;
+        if (m->op == DB_POINTER) {
+            if (m->a > 32767 || m->b > 32767 || m->length != 1 || m->data[0] > 7)
+                return DB_ARGUMENT;
+            raw[0] = m->data[0]; raw[1] = (uint8_t)m->a; raw[2] = (uint8_t)(m->a >> 8);
+            raw[3] = (uint8_t)m->b; raw[4] = (uint8_t)(m->b >> 8);
+        } else {
+            if (m->a > 2 || m->b || m->length != len) return DB_ARGUMENT;
+            memcpy(raw, m->data, len);
+            if ((kind == 0 && raw[1]) || (kind == 2 && (raw[0] > 7 || raw[2] > 127 || raw[4] > 127)))
+                return DB_ARGUMENT;
+        }
+        if (!kind) { h->modifiers = raw[0]; memcpy(h->keys, raw + 2, 6); }
+        if (kind == 1) h->buttons = raw[0];
+        if (kind == 2) { h->pointer_seen = true; memcpy(h->pointer, raw, 5); }
+        report(h, kind, 0, 0, 0);
+        db_report *r = &h->queue[(h->head + h->count - 1) % DB_REPORTS];
+        r->length = (uint8_t)len; memcpy(r->raw, raw, len);
+        return DB_OK;
+    }
     if (m->op != DB_KEY_TEXT && m->length)
         return DB_ARGUMENT;
     unsigned need = m->op == DB_KEY_TEXT ? m->length * 2 : 2;
@@ -314,6 +348,7 @@ void db_init(db_device *d, const db_config *c, db_send_fn send, db_complete_fn c
     d->ctx = ctx;
     d->next_storage = 0x80000000u;
     d->sectors = DB_SECTORS;
+    for (unsigned i = 0; i < 3; i++) d->usb.protocol_value[i] = 1;
 }
 void db_disconnect(db_device *d) {
     d->udp_reads = false;
@@ -379,6 +414,26 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         r.b = d->hid.count;
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
+    } else if (m.op == DB_USB_STATUS) {
+        if (m.a || m.b || m.length) r.status = DB_ARGUMENT;
+        else {
+            uint8_t out[156];
+            uint32_t words[39] = {1, d->usb.mounted, d->usb.suspended, d->usb.resets,
+                d->usb.configurations, d->hid.epoch, d->clock_ms,
+                d->usb.configured_ms, d->usb.network_ms};
+            for (unsigned i = 0; i < 3; i++) {
+                unsigned j = 9 + i * 10;
+                db_hid_counts *v = &d->hid.counts[i];
+                words[j] = v->accepted; words[j+1] = v->submitted; words[j+2] = v->completed;
+                words[j+3] = v->completed ? d->clock_ms - v->last_ms : UINT32_MAX;
+                words[j+4] = d->usb.idle[i]; words[j+5] = d->usb.protocol[i];
+                words[j+6] = d->usb.protocol_value[i]; words[j+7] = i == 2 ? 0x84 : 0x81 + i;
+                words[j+8] = d->usb.completed[i];
+                words[j+9] = d->usb.completed[i] ? d->clock_ms - d->usb.last_ms[i] : UINT32_MAX;
+            }
+            for (unsigned i = 0; i < 39; i++) put32(out + i*4, words[i]);
+            r.data = out; r.length = sizeof(out); return send_message(d, &r);
+        }
     } else if (m.op == DB_METRICS) {
         if (m.length || m.a || m.b) {
             r.status = DB_ARGUMENT;
@@ -455,8 +510,14 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
             d->media = false;
             d->changed = true;
         }
-    } else
+    } else {
         r.status = (uint8_t)db_hid_command(&d->hid, &m);
+        if (!r.status) {
+            uint8_t fence[16]; put32(fence, d->hid.epoch);
+            for (unsigned i=0; i<3; i++) put32(fence+4+i*4, d->hid.counts[i].accepted);
+            r.data=fence; r.length=sizeof(fence); return send_message(d,&r);
+        }
+    }
     return send_message(d, &r);
 }
 bool db_storage_begin(db_device *d, uint8_t op, uint32_t lba, const uint8_t *data, uint32_t now) {

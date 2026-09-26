@@ -63,6 +63,15 @@ Pin a Pico SDK/TinyUSB combination supporting asynchronous MSC completion and pr
 
 ## Verification and acceptance
 
+Agent-control extension: add USB-side observability, input completion fences,
+structured CLI errors and opaque token-file authentication, bounded timed input,
+explicit readiness/reconnect, a separate absolute-pointer HID interface, and
+Linux/WSL flashing. USB interfaces 0/1/2 retain keyboard/mouse/MSC; absolute
+pointer is interface 3. Keep storage stable; further throughput work is lower
+priority than helping the VibeOS lane diagnose real USB enumeration and polling.
+Separate power is evaluated against the Pico 2 W schematic and needs dedicated
+bench acceptance before enabling a VBUS-aware attach/detach mode.
+
 Use native firmware tests with fake flash/USB/network transports, pytest with temporary directories and a fake Pico WebSocket server, formatting/lint/type checks, schema/protocol conformance, and actual Pico 2 W cross-compilation in CI. Validate FAT output with independent Linux filesystem tools when practical. CI configuration must fit the Gitea runner available on Sunspot; do not assume a GitHub runner exists.
 
 Cover corruption, absent/unknown config keys, input size boundaries, malformed envelopes, authentication, modifier/report ordering, mouse state, request IDs, timeouts, concurrent host requests, cancellation, stale responses, path containment, FAT chains, and failed persistence. Include tests proving validation errors never echo secret values.

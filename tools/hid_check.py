@@ -21,7 +21,7 @@ args = parser.parse_args()
 logging.disable(logging.CRITICAL)
 root = tk.Tk()
 root.title("PicoUSB hardware input test")
-root.geometry("760x480")
+root.geometry("760x620")
 tk.Label(root, text="PicoUSB hardware input test", font=("Segoe UI", 20)).pack(pady=14)
 tk.Label(
     root,
@@ -90,7 +90,7 @@ async def exercise():
     try:
         await box.connect()
         await asyncio.sleep(0.5)
-        await act(lambda: box.keyboard.type("PicoUSB Aa1!"))
+        await act(lambda: box.keyboard.type("PicoUSB Aa1!", delay_ms=5))
         await act(lambda: box.keyboard.press("ENTER"))
         for key, vk in (("CTRL", 0x11), ("ALT", 0x12)):
             await act(lambda key=key: box.keyboard.key_down(key))
@@ -103,6 +103,30 @@ async def exercise():
         for button in ("left", "right", "middle"):
             await act(lambda button=button: box.mouse.click(button))
         await act(lambda: box.mouse.scroll(1))
+        x, y = observed["pointer_target"]
+        width, height = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
+        if not (0 <= x < width and 0 <= y < height):
+            raise RuntimeError("move test window onto primary display")
+        await act(
+            lambda: box.pointer.move(
+                round(x * 32767 / (width - 1)), round(y * 32767 / (height - 1))
+            )
+        )
+        actual = position()
+        observed["absolute"] = abs(actual[0] - x) <= 5 and abs(actual[1] - y) <= 5
+        if not observed["absolute"]:
+            raise RuntimeError("absolute mapping differs; do not click outside the test target")
+        await act(
+            lambda: box.pointer.click(
+                round(x * 32767 / (width - 1)), round(y * 32767 / (height - 1))
+            )
+        )
+        await act(lambda: box.keyboard.press("F1", hold_ms=40, repeat=3, interval_ms=40))
+        await act(lambda: box.raw_report(0, bytes(8)))
+        telemetry = await box.usb_status()
+        observed["completions"] = all(
+            h.completed > 0 and h.accepted == h.completed for h in telemetry.hid
+        )
         await act(lambda: box.keyboard.key_down("SHIFT"))
         observed["shift_down"] = bool(u.GetAsyncKeyState(0x10) & 0x8000)
     finally:
@@ -125,6 +149,10 @@ def start():
     entry.focus_set()
     events.clear()
     observed.clear()
+    observed["pointer_target"] = (
+        entry.winfo_rootx() + entry.winfo_width() // 2,
+        entry.winfo_rooty() + entry.winfo_height() // 2,
+    )
     active = True
     button.configure(state=tk.DISABLED)
     status.set("Testing real USB input. Keep this window focused...")
@@ -155,6 +183,9 @@ def poll():
         "three mouse buttons": {1, 2, 3} <= {e[2] for e in events if e[0] == "button_down"}
         and {1, 2, 3} <= {e[2] for e in events if e[0] == "button_up"},
         "mouse wheel": "wheel" in kinds,
+        "absolute pointer": bool(observed.get("absolute")),
+        "timed F1 repeat": sum(e[0] == "down" and e[1] == "F1" for e in events) == 3,
+        "USB completion fences": bool(observed.get("completions")),
     }
     for name, result in checks.items():
         print(name + ": " + ("PASS" if result else "FAIL"), flush=True)

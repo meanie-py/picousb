@@ -17,6 +17,9 @@ enum {
     DB_METRICS = 3,
     DB_UDP_PROBE = 4,
     DB_UDP_READS = 5,
+    DB_USB_STATUS = 6,
+    DB_RAW_REPORT = 7,
+    DB_POINTER = 8,
     DB_KEY_DOWN = 10,
     DB_KEY_UP,
     DB_KEY_PRESS,
@@ -46,17 +49,32 @@ typedef struct {
 typedef struct {
     uint8_t kind, modifiers, keys[6], buttons;
     int8_t x, y, wheel;
+    uint8_t raw[8], length;
 } db_report;
+typedef struct {
+    uint32_t accepted, submitted, completed, last_ms;
+} db_hid_counts;
 typedef struct {
     uint8_t modifiers, keys[6], buttons;
     db_report queue[DB_REPORTS];
     uint16_t head, count;
+    uint32_t epoch;
+    db_hid_counts counts[3];
+    uint8_t pointer[5];
+    bool pointer_seen;
 } db_hid;
+typedef struct {
+    bool mounted, suspended;
+    uint32_t resets, configurations, configured_ms, network_ms;
+    uint32_t idle[3], protocol[3], protocol_value[3];
+    uint32_t completed[3], last_ms[3];
+} db_usb_status;
 typedef bool (*db_send_fn)(void *, const uint8_t *, size_t);
 typedef void (*db_complete_fn)(void *, bool, const uint8_t *, size_t);
 typedef struct {
     db_config config;
     db_hid hid;
+    db_usb_status usb;
     db_send_fn send;
     db_complete_fn complete;
     void *ctx;

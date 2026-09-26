@@ -168,6 +168,8 @@ static bool parse(void) {
         if (!consumed)
             return true;
         if (op == 2) {
+            /* USB callbacks may have completed since the previous main-loop tick. */
+            device.clock_ms = to_ms_since_boot(get_absolute_time());
             if (!db_receive(&device, data, len))
                 return false;
         } else if (op == 8)

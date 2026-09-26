@@ -217,6 +217,13 @@ filesystem crash recovery.
 
 ## Security and testing
 
+For USB-driver diagnostics, non-interactive token files, completion-based drain,
+timed keys/typing, absolute pointer input, readiness/reconnect, Linux flashing,
+and the separate-power evaluation, see [agent bench control](docs/agent-control.md).
+The absolute pointer adds a fourth interface; the existing keyboard, mouse and
+MSC interface numbers are preserved. The real Pi's UEFI/driver acceptance is
+separate from the Windows scratch-window checks.
+
 An experimental `--udp-reads` connection flag moves successful storage read data
 over a bounded, acknowledged UDP transport. Authentication, control, writes and
 flushes still use WebSockets. For example:

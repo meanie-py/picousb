@@ -58,6 +58,10 @@ not roll back completed writes or input already delivered to the USB host.
 | 2 | status | A=B=0, empty payload | A=media present, B=queued HID reports |
 | 3 | metrics | A=B=0, empty payload | A=layout version 1, B=6 records, 288-byte payload |
 | 4 | UDP diagnostic | arm: A=1..60000 ms, B=0, random 16-byte cookie; query: A=B=0, empty payload | A=layout version 1, B=8081, five u32 counters |
+| 5 | UDP reads | A=1, B=0, random 16-byte cookie | A=1, B=8081; see UDP section |
+| 6 | USB telemetry | A=B=0, empty payload | 156-byte versioned payload below |
+| 7 | raw HID input | A=HID instance 0/1/2, B=0, payload 8/5/5 bytes | input fence |
+| 8 | absolute pointer | A=X, B=Y, each 0..32767; payload one button-mask byte 0..7 | input fence |
 
 When no DEVICE_TOKEN was provisioned, authenticate with an empty payload.
 Authenticated operations require the returned session. Neither token nor Wi-Fi
@@ -115,6 +119,31 @@ bounded; storage continues to use WebSockets. Tests should avoid IP fragmentatio
 
 ## HID commands
 
+Successful HID operations (7, 8, 10–14, 20–25) include a 16-byte `<4I` input
+fence: input epoch, accepted keyboard reports, accepted mouse reports, accepted
+absolute-pointer reports. Counts are uint32 and compared modulo 2^32 within the
+same epoch. Raw keyboard byte 1 must be zero. Raw absolute-pointer coordinates
+and buttons have the same bounds as opcode 8. Raw relative mouse uses the normal
+five-byte layout and is reduced to three bytes in boot protocol mode.
+
+Opcode 6 returns `<39I` (156 bytes), layout version 1. The first nine words are:
+version, mounted/configured, suspended, lifetime bus-reset count, lifetime
+SET_CONFIGURATION request count, input epoch, uptime_ms, first_configured_ms,
+first_network_ready_ms. Zero first-event timestamps mean not observed yet.
+Three ten-word records follow, for keyboard, relative mouse, absolute pointer:
+accepted, submitted, completed, epoch_last_completion_age_ms, SET_IDLE count,
+SET_PROTOCOL count, last protocol value, IN endpoint, lifetime_completed,
+lifetime_last_completion_age_ms. Ages are UINT32_MAX until observed. Epoch
+counters reset when queued input is cancelled (including session replacement);
+lifetime counters persist until reboot. All counter/time fields are uint32.
+The protocol value starts in report mode; setup counters describe observed
+requests, not proof that a target application consumed input.
+
+The host `status()` combines operations 2 and 6. Host-local error codes 9, 10,
+11 mean USB not mounted, completion timeout, and input epoch changed. They are
+not new firmware error responses. See [agent control](agent-control.md) for CLI
+exit codes, timing/reconnect semantics and physical-acceptance limits.
+
 | Op | Operation | A | B | Payload |
 | --- | --- | --- | --- | --- |
 | 10 | keyboard.key_down | HID usage | 0 | empty |
@@ -140,9 +169,10 @@ LF map to US-layout reports. Unsupported text rejects the whole command.
 Mouse buttons: left=1, right=2, middle=4. Motion/wheel are signed 32-bit values
 encoded in A/B, constrained to -127..127. The Python API chunks larger motion.
 HID responses acknowledge bounded queue acceptance, not target application
-consumption. `await box.drain()` waits until reports are submitted to USB; it
-cannot prove that the target OS handled them. Queue capacity is 256 reports.
-Disconnect clears queued actions and emits keyboard/mouse release reports.
+consumption. `await box.drain()` waits for the USB completion fence and rejects
+an intervening input-epoch change. It cannot prove that the target OS handled
+the input. Queue capacity is 256 reports. Disconnect clears queued actions and
+emits release reports, including absolute-pointer release if it has been used.
 
 ## Storage attachment and sector transport
 

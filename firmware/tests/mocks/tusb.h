@@ -32,6 +32,8 @@ typedef struct {
     uint8_t iManufacturer, iProduct, iSerialNumber, bNumConfigurations;
 } tusb_desc_device_t;
 bool tud_hid_n_ready(uint8_t);
+bool tud_mounted(void);
+bool tud_suspended(void);
 uint8_t tud_hid_n_get_protocol(uint8_t);
 bool tud_hid_n_report(uint8_t, uint8_t, const void *, uint16_t);
 bool tud_hid_n_keyboard_report(uint8_t, uint8_t, uint8_t, const uint8_t *);

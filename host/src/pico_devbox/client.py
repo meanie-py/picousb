@@ -2,16 +2,21 @@
 
 import asyncio
 import secrets
-from contextlib import suppress
+import struct
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
+from dataclasses import asdict
 from pathlib import Path
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
+from .auth import read_token_file
 from .image import ImageDisk
 from .protocol import HEADER, MAX_PAYLOAD, RESPONSE, SECTORS, DevBoxError, Message, Op
 from .storage import DirectoryDisk
 from .udp_reads import UDPReads
+from .usb_status import USBStatus
 
 KEYS = {
     "ENTER": 40,
@@ -58,25 +63,72 @@ class Keyboard:
     async def key_up(self, key: str | int) -> None:
         await self.box.request(Op.KEY_UP, key_code(key))
 
-    async def press(self, key: str | int, *modifiers: str) -> None:
+    async def press(
+        self,
+        key: str | int,
+        *modifiers: str,
+        hold_ms: int = 0,
+        repeat: int = 1,
+        interval_ms: int = 0,
+    ) -> None:
+        async with self.box.input_sequence():
+            await self._press(
+                key, *modifiers, hold_ms=hold_ms, repeat=repeat, interval_ms=interval_ms
+            )
+
+    async def _press(
+        self,
+        key: str | int,
+        *modifiers: str,
+        hold_ms: int = 0,
+        repeat: int = 1,
+        interval_ms: int = 0,
+    ) -> None:
+        if not 0 <= hold_ms <= 60000 or not 1 <= repeat <= 10000 or not 0 <= interval_ms <= 60000:
+            raise ValueError("invalid key timing")
         mask = 0
         for mod in modifiers:
             code = key_code(mod)
             if not 224 <= code <= 231:
                 raise ValueError("invalid modifier")
             mask |= 1 << (code - 224)
-        await self.box.request(Op.KEY_PRESS, key_code(key), mask)
+        code = key_code(key)
+        for i in range(repeat):
+            if hold_ms:
+                try:
+                    for mod in modifiers:
+                        await self.key_down(mod)
+                    await self.key_down(code)
+                    await self.box.drain()
+                    await asyncio.sleep(hold_ms / 1000)
+                finally:
+                    await self.release_all()
+            else:
+                await self.box.request(Op.KEY_PRESS, code, mask)
+            if repeat > 1 or hold_ms:
+                await self.box.drain()
+            if i + 1 < repeat:
+                await asyncio.sleep(interval_ms / 1000)
 
     async def release_all(self) -> None:
         await self.box.request(Op.KEY_RELEASE)
 
-    async def type(self, text: str) -> None:
+    async def type(self, text: str, *, delay_ms: int = 0) -> None:
+        async with self.box.input_sequence():
+            await self._type(text, delay_ms=delay_ms)
+
+    async def _type(self, text: str, *, delay_ms: int = 0) -> None:
+        if not 0 <= delay_ms <= 60000:
+            raise ValueError("invalid typing delay")
         data = text.encode("ascii")
         if any(c < 32 and c not in (8, 9, 10, 13) or c == 127 for c in data):
             raise ValueError("unsupported ASCII control character")
-        for offset in range(0, len(data), 64):
-            await self.box.request(Op.KEY_TEXT, payload=data[offset : offset + 64])
+        chunk = 1 if delay_ms else 64
+        for offset in range(0, len(data), chunk):
+            await self.box.request(Op.KEY_TEXT, payload=data[offset : offset + chunk])
             await self.box.drain()
+            if delay_ms and offset + chunk < len(data):
+                await asyncio.sleep(delay_ms / 1000)
 
 
 class Mouse:
@@ -86,10 +138,11 @@ class Mouse:
     async def move(self, x: int, y: int) -> None:
         if abs(x) > 32767 or abs(y) > 32767:
             raise ValueError("movement exceeds limit")
-        while x or y:
-            dx, dy = max(-127, min(127, x)), max(-127, min(127, y))
-            await self.box.request(Op.MOUSE_MOVE, dx, dy)
-            x, y = x - dx, y - dy
+        async with self.box.input_sequence():
+            while x or y:
+                dx, dy = max(-127, min(127, x)), max(-127, min(127, y))
+                await self.box.request(Op.MOUSE_MOVE, dx, dy)
+                x, y = x - dx, y - dy
 
     async def _button(self, op: Op, button: str) -> None:
         if button not in ("left", "right", "middle"):
@@ -112,6 +165,30 @@ class Mouse:
 
     async def release_all(self) -> None:
         await self.box.request(Op.MOUSE_RELEASE)
+
+
+class Pointer:
+    def __init__(self, box: "DevBox") -> None:
+        self.box = box
+
+    async def move(self, x: int, y: int, *, buttons: int = 0) -> None:
+        if not 0 <= x <= 32767 or not 0 <= y <= 32767 or not 0 <= buttons <= 7:
+            raise ValueError("absolute pointer outside range")
+        await self.box.request(Op.POINTER, x, y, bytes([buttons]))
+
+    async def click(self, x: int, y: int, button: str = "left") -> None:
+        async with self.box.input_sequence():
+            await self._click(x, y, button)
+
+    async def _click(self, x: int, y: int, button: str = "left") -> None:
+        if button not in ("left", "right", "middle"):
+            raise ValueError("unknown pointer button")
+        try:
+            await self.move(x, y, buttons={"left": 1, "right": 2, "middle": 4}[button])
+            await self.box.drain()
+        finally:
+            await self.move(x, y)
+        await self.box.drain()
 
 
 class Storage:
@@ -209,12 +286,29 @@ class Storage:
 
 class DevBox:
     def __init__(
-        self, uri: str, token: str = "", *, timeout: float = 8.0, udp_reads: bool = False
+        self,
+        uri: str,
+        token: str = "",
+        *,
+        timeout: float = 8.0,
+        udp_reads: bool = False,
+        auto_reconnect: bool = False,
+        token_file: str | Path | None = None,
     ) -> None:
+        if token_file is not None:
+            if token:
+                raise ValueError("choose token or token_file")
+            token = read_token_file(token_file)
         self.uri, self._token, self.timeout = uri, token, timeout
         self.ws: ClientConnection | None = None
         self.session = 0
         self.udp_reads = udp_reads
+        self.auto_reconnect = auto_reconnect
+        self._connecting = self._waiting_ready = False
+        self._reconnect_lock = asyncio.Lock()
+        self._input_lock = asyncio.Lock()
+        self._input_active = False
+        self._hid_fence: tuple[int, ...] | None = None
         self._udp: UDPReads | None = None
         self._next_id = 0
         self._pending: dict[int, tuple[int, asyncio.Future[Message]]] = {}
@@ -223,6 +317,7 @@ class DevBox:
         self._queue: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=4)
         self._send_lock = asyncio.Lock()
         self.keyboard, self.mouse, self.storage = Keyboard(self), Mouse(self), Storage(self)
+        self.pointer = Pointer(self)
 
     async def __aenter__(self) -> "DevBox":
         await self.connect()
@@ -235,6 +330,7 @@ class DevBox:
         if self.ws is not None:
             raise DevBoxError(4, "already connected")
         self.session, self._next_id = 0, 0
+        self._hid_fence = None
         self._queue = asyncio.Queue(maxsize=4)
         self.ws = await connect(
             self.uri,
@@ -247,6 +343,7 @@ class DevBox:
         )
         self._receiver = asyncio.create_task(self._receive())
         self._worker = asyncio.create_task(self._storage_worker())
+        self._connecting = True
         try:
             reply = await self.request(Op.AUTH, payload=self._token.encode())
             if not reply.session:
@@ -265,6 +362,8 @@ class DevBox:
         except BaseException:
             await self.close()
             raise
+        finally:
+            self._connecting = False
 
     async def reconnect(self) -> None:
         # Reattach is explicit: do not unexpectedly re-present a mounted disk.
@@ -281,6 +380,17 @@ class DevBox:
                 raise DevBoxError(5, "connection closed") from None
 
     async def request(self, op: Op, a: int = 0, b: int = 0, payload: bytes = b"") -> Message:
+        if self._input_active and (self.ws is None or self.ws.close_code is not None):
+            raise DevBoxError(5, "input sequence lost its connection")
+        if (
+            self.auto_reconnect
+            and not self._connecting
+            and not self._waiting_ready
+            and (self.ws is None or self.ws.close_code is not None)
+        ):
+            async with self._reconnect_lock:
+                if self.ws is None or self.ws.close_code is not None:
+                    await self.wait_ready(timeout=self.timeout, usb=False)
         if len(self._pending) >= 32 or self._next_id >= 0x7FFFFFFE:
             raise DevBoxError(3, "request capacity exceeded")
         self._next_id += 1
@@ -293,6 +403,18 @@ class DevBox:
                 reply = await future
             if reply.status:
                 raise DevBoxError(reply.status)
+            if (
+                op in (Op.RAW_REPORT, Op.POINTER)
+                or Op.KEY_DOWN <= op <= Op.KEY_TEXT
+                or Op.MOUSE_MOVE <= op <= Op.MOUSE_RELEASE
+            ):
+                if len(reply.payload) == 16:
+                    self._hid_fence = struct.unpack("<4I", reply.payload)
+                else:
+                    self._hid_fence = None
+                    if self.ws is not None:
+                        await self.ws.close()
+                    raise DevBoxError(1, "missing HID completion fence; update firmware")
             return reply
         except (TimeoutError, asyncio.CancelledError):
             # The command may already have changed HID or media state. End the
@@ -305,19 +427,88 @@ class DevBox:
         finally:
             self._pending.pop(rid, None)
 
-    async def status(self) -> dict[str, int | bool | str]:
+    async def status(self) -> dict[str, object]:
         reply = await self.request(Op.STATUS)
         return {
             "network": "connected",
             "media": bool(reply.a),
             "queued_reports": reply.b,
             "session": self.session,
+            "usb": asdict(await self.usb_status()),
         }
 
+    async def usb_status(self) -> USBStatus:
+        return USBStatus.decode((await self.request(Op.USB_STATUS)).payload)
+
+    @asynccontextmanager
+    async def input_sequence(self) -> AsyncIterator[None]:
+        async with self._input_lock:
+            if self.auto_reconnect and (self.ws is None or self.ws.close_code is not None):
+                await self.wait_ready(timeout=self.timeout, usb=False)
+            self._input_active = True
+            try:
+                yield
+            finally:
+                self._input_active = False
+
     async def drain(self) -> None:
-        async with asyncio.timeout(self.timeout):
-            while (await self.request(Op.STATUS)).b:
-                await asyncio.sleep(0.02)
+        connection = self.ws
+        status = await self.usb_status()
+        fence = self._hid_fence or (status.epoch, *(h.accepted for h in status.hid))
+        deadline = asyncio.get_running_loop().time() + self.timeout
+        while True:
+            if self.ws is not connection:
+                raise DevBoxError(11, "control session changed before input completed")
+            if status.epoch != fence[0]:
+                raise DevBoxError(11, "USB input interrupted by reset")
+            if not status.mounted:
+                raise DevBoxError(9, "USB not mounted")
+            if all(
+                (h.completed - target) & 0xFFFFFFFF < 0x80000000
+                for h, target in zip(status.hid, fence[1:], strict=True)
+            ):
+                return
+            if asyncio.get_running_loop().time() >= deadline:
+                raise DevBoxError(10, "host not completing HID transfers")
+            await asyncio.sleep(0.02)
+            # A failed telemetry request is a network failure, not proof of no polling.
+            status = await self.usb_status()
+
+    async def raw_report(self, interface: int, data: bytes) -> None:
+        if interface not in (0, 1, 2) or len(data) != (8 if interface == 0 else 5):
+            raise ValueError("invalid raw HID report size")
+        await self.request(Op.RAW_REPORT, interface, payload=data)
+
+    async def wait_ready(self, *, timeout: float = 30, usb: bool = True) -> dict[str, object]:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        self._waiting_ready = True
+        last_code = 5
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    try:
+                        if self.ws is None or self.ws.close_code is not None:
+                            await self.close()
+                            await self.connect()
+                        state = await self.status()
+                        u = await self.usb_status()
+                        if not usb or u.mounted and not u.suspended:
+                            return state
+                        last_code = 9
+                    except (OSError, TimeoutError):
+                        last_code = 5
+                        await self.close()
+                    except DevBoxError as error:
+                        if error.code != 5:
+                            raise
+                        last_code = 5
+                        await self.close()
+                    await asyncio.sleep(0.2)
+        except TimeoutError:
+            raise DevBoxError(last_code, "readiness deadline expired") from None
+        finally:
+            self._waiting_ready = False
 
     async def _receive(self) -> None:
         assert self.ws is not None

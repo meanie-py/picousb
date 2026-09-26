@@ -20,7 +20,28 @@ async def fake() -> AsyncIterator[tuple[str, list[Message]]]:
             m = Message.decode(raw)
             messages.append(m)
             status = 0 if m.op != Op.AUTH or m.payload == b"synthetic-test-token" else 2
-            await ws.send(Message(m.op | RESPONSE, m.id, 42, status=status).encode())
+            payload = b""
+            if Op.KEY_DOWN <= m.op <= Op.KEY_TEXT or Op.MOUSE_MOVE <= m.op <= Op.MOUSE_RELEASE:
+                payload = bytes(16)
+            if m.op == Op.USB_STATUS:
+                payload = struct.pack(
+                    "<39I",
+                    1,
+                    1,
+                    0,
+                    0,
+                    1,
+                    0,
+                    100,
+                    1,
+                    1,
+                    *([0] * 7 + [0x81, 0, 0]),
+                    *([0] * 7 + [0x82, 0, 0]),
+                    *([0] * 7 + [0x84, 0, 0]),
+                )
+            await ws.send(
+                Message(m.op | RESPONSE, m.id, 42, status=status, payload=payload).encode()
+            )
 
     async with serve(handle, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]

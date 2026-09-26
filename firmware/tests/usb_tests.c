@@ -9,6 +9,14 @@ static uint8_t protocol = HID_PROTOCOL_REPORT, sense;
 static unsigned reports, completions;
 static uint16_t report_length;
 static int32_t last_complete;
+void tud_hid_report_complete_cb(uint8_t, const uint8_t *, uint16_t);
+void tud_picousb_bus_reset_cb(void);
+void tud_picousb_configuration_cb(void);
+void tud_hid_set_protocol_cb(uint8_t, uint8_t);
+bool tud_hid_set_idle_cb(uint8_t, uint8_t);
+void tud_mount_cb(void);
+bool tud_mounted(void) { return true; }
+bool tud_suspended(void) { return false; }
 bool tud_hid_n_ready(uint8_t i) {
     (void)i;
     return ready;
@@ -161,5 +169,43 @@ int main(void) {
     assert(tud_msc_write10_cb(0, 0, 0, bulk, sizeof(bulk)) == -2);
     tud_msc_abort_cb();
     assert(!device.pending && !device.media);
+    /* Submitted is not completed; duplicate/stale completions cannot satisfy a fence. */
+    tud_picousb_bus_reset_cb();
+    uint32_t epoch = device.hid.epoch;
+    usb_reports();
+    assert(device.hid.counts[0].accepted == 1 && device.hid.counts[0].submitted == 1);
+    assert(device.hid.counts[0].completed == 0);
+    tud_hid_report_complete_cb(0, NULL, 8);
+    tud_hid_report_complete_cb(0, NULL, 8);
+    assert(device.hid.counts[0].completed == 1);
+    usb_reports();
+    db_disconnect(&device);
+    assert(device.hid.epoch != epoch);
+    tud_hid_report_complete_cb(1, NULL, 5);
+    assert(!device.hid.counts[1].completed);
+    tud_picousb_bus_reset_cb();
+    tud_picousb_configuration_cb(); tud_mount_cb();
+    assert(device.usb.resets == 2 && device.usb.configurations == 1 && device.usb.mounted);
+    assert(tud_hid_set_idle_cb(1, 0)); tud_hid_set_protocol_cb(1, 0);
+    assert(device.usb.idle[1] == 1 && device.usb.protocol[1] == 1 && !device.usb.protocol_value[1]);
+    assert(!tud_hid_set_idle_cb(3, 0));
+    while (device.hid.count) { usb_reports(); tud_hid_report_complete_cb(0,NULL,8); tud_hid_report_complete_cb(1,NULL,5); }
+    uint8_t button = 1;
+    db_message pointer = {.op=DB_POINTER, .a=32767, .b=1234, .length=1, .data=&button};
+    assert(db_hid_command(&device.hid,&pointer) == DB_OK);
+    assert(device.hid.counts[2].accepted == 1);
+    usb_reports(); assert(report_length == 5 && !device.hid.counts[2].completed);
+    tud_hid_report_complete_cb(2,NULL,5);
+    assert(device.hid.counts[2].completed == 1);
+    assert(tud_hid_get_report_cb(2,0,HID_REPORT_TYPE_INPUT,buffer,5)==5);
+    assert(buffer[0]==1 && buffer[1]==255 && buffer[2]==127);
+    pointer.a=32768;
+    assert(db_hid_command(&device.hid,&pointer)==DB_ARGUMENT && !device.hid.count);
+    db_hid_reset(&device.hid);
+    assert(device.hid.count==3 && device.hid.pointer[0]==0);
+    uint8_t raw[8] = {2,0,4};
+    db_message report = {.op=DB_RAW_REPORT, .length=8, .data=raw};
+    assert(db_hid_command(&device.hid,&report)==DB_OK && device.hid.modifiers==2);
+    raw[1]=1; assert(db_hid_command(&device.hid,&report)==DB_ARGUMENT);
     return 0;
 }

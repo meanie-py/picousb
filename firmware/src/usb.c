@@ -12,6 +12,8 @@ static uint8_t *read_buffer;
 static bool prevent_removal;
 static bool timing_network, timing_read;
 static uint32_t network_started, read_started;
+static bool hid_pending[3];
+static uint32_t hid_epoch[3];
 static void deliver(void *, uint8_t, bool, const uint8_t *, uint32_t);
 static db_pipeline pipeline = {.device = &device, .done = deliver};
 void usb_storage_tick(void) {
@@ -25,23 +27,33 @@ void usb_storage_tick(void) {
 }
 static const uint8_t keyboard_desc[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
 static const uint8_t mouse_desc[] = {TUD_HID_REPORT_DESC_MOUSE()};
+/* Separate tablet-style absolute pointer, three buttons and unsigned X/Y.
+ * Generic Desktop Mouse usage supports standard absolute-pointer consumers. */
+static const uint8_t pointer_desc[] = {
+    0x05,0x01, 0x09,0x02, 0xa1,0x01, 0x09,0x01, 0xa1,0x00,
+    0x05,0x09, 0x19,0x01, 0x29,0x03, 0x15,0x00, 0x25,0x01,
+    0x95,0x03, 0x75,0x01, 0x81,0x02, 0x95,0x01, 0x75,0x05, 0x81,0x03,
+    0x05,0x01, 0x09,0x30, 0x09,0x31, 0x15,0x00, 0x26,0xff,0x7f,
+    0x75,0x10, 0x95,0x02, 0x81,0x02, 0xc0,0xc0
+};
 static const tusb_desc_device_t desc = {.bLength = sizeof(tusb_desc_device_t),
                                         .bDescriptorType = TUSB_DESC_DEVICE,
                                         .bcdUSB = 0x0200,
                                         .bMaxPacketSize0 = 64,
                                         .idVendor = 0xcafe,
                                         .idProduct = 0x4013,
-                                        .bcdDevice = 0x0100,
+                                        .bcdDevice = 0x0101,
                                         .iManufacturer = 1,
                                         .iProduct = 2,
                                         .iSerialNumber = 3,
                                         .bNumConfigurations = 1};
-enum { CONFIG_LENGTH = TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN };
+enum { CONFIG_LENGTH = TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN };
 static const uint8_t config_desc[] = {
-    TUD_CONFIG_DESCRIPTOR(1, 3, 0, CONFIG_LENGTH, 0, 250),
+    TUD_CONFIG_DESCRIPTOR(1, 4, 0, CONFIG_LENGTH, 0, 250),
     TUD_HID_DESCRIPTOR(0, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(keyboard_desc), 0x81, 16, 5),
     TUD_HID_DESCRIPTOR(1, 0, HID_ITF_PROTOCOL_MOUSE, sizeof(mouse_desc), 0x82, 16, 5),
-    TUD_MSC_DESCRIPTOR(2, 0, 0x03, 0x83, 64)};
+    TUD_MSC_DESCRIPTOR(2, 0, 0x03, 0x83, 64),
+    TUD_HID_DESCRIPTOR(3, 0, 0, sizeof(pointer_desc), 0x84, 16, 5)};
 const uint8_t *tud_descriptor_device_cb(void) {
     return (const uint8_t *)&desc;
 }
@@ -50,7 +62,7 @@ const uint8_t *tud_descriptor_configuration_cb(uint8_t index) {
     return config_desc;
 }
 const uint8_t *tud_hid_descriptor_report_cb(uint8_t instance) {
-    return instance ? mouse_desc : keyboard_desc;
+    return instance == 0 ? keyboard_desc : instance == 1 ? mouse_desc : instance == 2 ? pointer_desc : NULL;
 }
 const uint16_t *tud_descriptor_string_cb(uint8_t index, uint16_t lang) {
     (void)lang;
@@ -82,6 +94,11 @@ uint16_t tud_hid_get_report_cb(uint8_t inst, uint8_t id, hid_report_type_t type,
     (void)id;
     if (type != HID_REPORT_TYPE_INPUT)
         return 0;
+    if (inst >= 3) return 0;
+    if (inst == 2) {
+        if (n < 5) return 0;
+        memcpy(buf, device.hid.pointer, 5); return 5;
+    }
     uint8_t keyboard[8] = {device.hid.modifiers, 0};
     memcpy(keyboard + 2, device.hid.keys, 6);
     uint8_t mouse[5] = {device.hid.buttons, 0, 0, 0, 0};
@@ -100,15 +117,59 @@ void tud_hid_set_report_cb(uint8_t i, uint8_t id, hid_report_type_t t, const uin
     (void)n;
 }
 void usb_reports(void) {
+    device.usb.mounted = tud_mounted();
+    device.usb.suspended = tud_suspended();
     db_report r;
     if (!db_hid_peek(&device.hid, &r) || !tud_hid_n_ready(r.kind))
         return;
     uint8_t mouse[5] = {r.buttons, (uint8_t)r.x, (uint8_t)r.y, (uint8_t)r.wheel, 0};
-    bool ok = r.kind ? tud_hid_n_report(1, 0, mouse,
+    if (r.kind >= 3 || hid_pending[r.kind]) return;
+    bool ok = r.length ? tud_hid_n_report(r.kind, 0, r.raw,
+                         r.kind == 1 && tud_hid_n_get_protocol(1) == HID_PROTOCOL_BOOT ? 3 : r.length)
+              : r.kind ? tud_hid_n_report(1, 0, mouse,
                                         tud_hid_n_get_protocol(1) == HID_PROTOCOL_BOOT ? 3 : 5)
                      : tud_hid_n_keyboard_report(0, 0, r.modifiers, r.keys);
-    if (ok)
+    if (ok) {
+        hid_pending[r.kind] = true;
+        hid_epoch[r.kind] = device.hid.epoch;
+        device.hid.counts[r.kind].submitted++;
         db_hid_pop(&device.hid);
+    }
+}
+void tud_hid_report_complete_cb(uint8_t instance, const uint8_t *report, uint16_t len) {
+    (void)report; (void)len;
+    if (instance >= 3 || !hid_pending[instance]) return;
+    hid_pending[instance] = false;
+    device.usb.completed[instance]++;
+    device.usb.last_ms[instance] = to_ms_since_boot(get_absolute_time());
+    if (hid_epoch[instance] != device.hid.epoch) return;
+    device.hid.counts[instance].completed++;
+    device.hid.counts[instance].last_ms = to_ms_since_boot(get_absolute_time());
+}
+void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol) {
+    if (instance >= 3) return;
+    device.usb.protocol[instance]++;
+    device.usb.protocol_value[instance] = protocol;
+}
+bool tud_hid_set_idle_cb(uint8_t instance, uint8_t rate) {
+    (void)rate;
+    if (instance >= 3) return false;
+    device.usb.idle[instance]++; return true;
+}
+void tud_mount_cb(void) {
+    device.usb.mounted = true;
+    if (!device.usb.configured_ms) device.usb.configured_ms = to_ms_since_boot(get_absolute_time());
+}
+void tud_suspend_cb(bool remote_wakeup_en) { (void)remote_wakeup_en; device.usb.suspended = true; }
+void tud_resume_cb(void) { device.usb.suspended = false; }
+void tud_picousb_configuration_cb(void) { device.usb.configurations++; }
+/* Main-loop hooks in pinned TinyUSB, not interrupt-context mutations. */
+void tud_picousb_bus_reset_cb(void) {
+    device.usb.resets++;
+    device.usb.mounted = device.usb.suspended = false;
+    memset(hid_pending, 0, sizeof(hid_pending));
+    for (unsigned i = 0; i < 3; i++) device.usb.protocol_value[i] = HID_PROTOCOL_REPORT;
+    db_hid_reset(&device.hid);
 }
 void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor[8], uint8_t product[16], uint8_t rev[4]) {
     (void)lun;
@@ -233,6 +294,8 @@ void tud_msc_abort_cb(void) {
     prevent_removal = false;
 }
 void tud_umount_cb(void) {
+    device.usb.mounted = false;
+    memset(hid_pending, 0, sizeof(hid_pending));
     tud_msc_abort_cb();
     db_hid_reset(&device.hid);
 }

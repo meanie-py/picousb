@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import patch_tinyusb  # noqa: E402
+import patch_usb_observer  # noqa: E402
 
 
 def test_pinned_patch_fresh_upgrade_idempotence(tmp_path: Path):
@@ -53,3 +54,32 @@ def test_metrics_patch_refuses_unrecognized_source(tmp_path: Path):
     with pytest.raises(RuntimeError, match="timing patch refused"):
         patch_tinyusb.patch(path)
     assert path.read_text() == "/* PICOUSB_ASYNC_SCSI_V1 */\nunknown source\n"
+
+
+def test_usb_observer_patch(tmp_path: Path):
+    deps = Path(os.environ.get("PICOUSB_DEPS_ROOT", ROOT / "build/deps"))
+    usb = deps / "pico-sdk/lib/tinyusb"
+    if not (usb / "src/device/usbd.c").exists():
+        pytest.skip("run bootstrap for pinned USB source")
+    original = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(usb),
+            "show",
+            "331c263400dd5ccf77264cab1fa6bbd9f374b44e:src/device/usbd.c",
+        ],
+        text=True,
+    )
+    path = tmp_path / "usbd.c"
+    path.write_text(original)
+    patch_usb_observer.patch(path)
+    result = path.read_text()
+    assert result.count("        tud_picousb_bus_reset_cb();") == 1
+    assert result.count("          tud_picousb_configuration_cb();") == 1
+    patch_usb_observer.patch(path)
+    assert path.read_text() == result
+    path.write_text("unexpected source")
+    with pytest.raises(RuntimeError):
+        patch_usb_observer.patch(path)
+    assert path.read_text() == "unexpected source"
