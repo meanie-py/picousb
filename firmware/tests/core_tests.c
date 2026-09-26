@@ -217,12 +217,43 @@ static void storage_success_test(void) {
     db_connect(&d);
     assert(d.session == 2 && !d.authenticated);
 }
+static void image_test(void) {
+    db_config c = {0};
+    db_device d;
+    db_init(&d, &c, send, complete, NULL);
+    db_connect(&d);
+    d.authenticated = true;
+    uint8_t buf[DB_MAX], ro = 1;
+    db_message m = {.op = DB_ATTACH, .id = 1, .session = d.session,
+                    .a = 2097152, .b = 512, .length = 1, .data = &ro}, r;
+    assert(db_receive(&d, buf, db_encode(buf, &m)) && d.media);
+    assert(d.sectors == 2097152 && d.read_only);
+    assert(!db_storage_begin(&d, DB_WRITE, 0, buf, 0));
+    assert(!db_storage_begin(&d, DB_READ, 2097152, NULL, 0));
+    assert(db_storage_begin(&d, DB_READ, 2097151, NULL, 0));
+    db_disconnect(&d);
+    d.authenticated = true;
+    m.id++;
+    ro = 2;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT && !d.media);
+    ro = 0;
+    m.id++;
+    m.a = 0;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT);
+    m.id++;
+    m.a = 0x80000000u;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT);
+}
 int main(void) {
     config_test();
     hid_test();
     protocol_test();
     websocket_test();
     storage_success_test();
+    image_test();
     puts("portable core tests passed");
     return 0;
 }

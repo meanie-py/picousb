@@ -28,14 +28,17 @@ async def run(args: argparse.Namespace) -> None:
             else:
                 await box.mouse.scroll(args.amount)
             await box.drain()
-        elif args.command == "serve":
-            await box.storage.serve_directory(args.directory)
-            print("Serving directory. Safely eject on target before stopping.")
+        elif args.command in ("serve", "serve-image"):
+            if args.command == "serve-image":
+                await box.storage.serve_image(args.image, read_only=not args.writable)
+            else:
+                await box.storage.serve_directory(args.directory)
+            print("Serving media. Safely eject on target before stopping.")
             while box.ws and box.ws.close_code is None and not box.storage.ejected.is_set():
                 await asyncio.sleep(0.1)
             if not box.storage.ejected.is_set():
                 raise RuntimeError("connection lost; recovery image retained")
-            print("Target ejected; directory synchronized.")
+            print("Target ejected; media synchronized.")
 
 
 def main() -> None:
@@ -47,6 +50,9 @@ def main() -> None:
     sub.add_parser("type").add_argument("text")
     sub.add_parser("key").add_argument("keys", nargs="+")
     sub.add_parser("serve").add_argument("directory")
+    image = sub.add_parser("serve-image")
+    image.add_argument("image")
+    image.add_argument("--writable", action="store_true")
     mouse = sub.add_parser("mouse").add_subparsers(dest="action", required=True)
     move = mouse.add_parser("move")
     move.add_argument("x", type=int)

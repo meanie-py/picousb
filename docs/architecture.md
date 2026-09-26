@@ -30,6 +30,13 @@ Keep keyboard/mouse state, ASCII mapping, protocol validation, and storage reque
 
 ## Storage choice and synchronization contract
 
+Extension accepted 2026-09-26: retain directory mode and add optional raw-image
+serving for boot artifacts and filesystem-independent tests. Raw images are
+read-only by default; writable mode updates the image directly and preserves
+target filesystem journals unchanged. The current physical target is a Pi 4B;
+Pi 5 is a future target. Both remain unavailable for this lane's boot tests.
+Windows-host USB acceptance uses disposable images instead.
+
 Use the host-side FAT implementation and block proxy alternative for version one. The public API remains directory-based: `await box.storage.serve_directory(path)`. The host may internally create a small FAT image and durable recovery journal; users do not manage disk images manually. Start with a fixed small volume (for example 32 MiB) and document filename rules before implementation. FAT 8.3 is acceptable initially; long names are desirable.
 
 Import the directory on media attach. The target exclusively owns the mounted FAT volume; concurrent host edits are unsupported. Do not rebuild allocation or directory metadata while mounted. Optimize enumeration or data transfer only after measuring a working first version.

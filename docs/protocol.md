@@ -10,10 +10,13 @@ use a trusted network with host-to-device reachability.
 
 RFC6455 HTTP upgrade at `/ws`, version 13, masked client frames, unmasked server
 frames. Binary messages only. Ping/pong supported. Fragmentation, extensions,
-text frames, RSV bits, and payloads over 1052 bytes are rejected by disconnecting.
+text frames, RSV bits, and messages over 16412 bytes are rejected by disconnecting.
 The supplied Python client uses unfragmented frames and disables compression.
-HTTP headers are limited to 2048 bytes; the bounded TCP accumulator is 4096
-bytes. Invalid envelopes close the session rather than echoing their contents.
+HTTP headers are limited to 2048 bytes; the bounded TCP accumulator is 17880
+bytes (maximum envelope, frame overhead, and one TCP segment). Invalid envelopes
+close the session rather than echoing their contents. Bulk buffers are static,
+not allocated on the firmware stack. Upgrade host and firmware together: early
+0.1 clients supported only 1024-byte payloads and single-sector requests.
 
 ## Binary envelope
 
@@ -29,7 +32,7 @@ All integers are little endian; Python layout is `<4sBBHIIIII` (28 bytes).
 | 12 | 4 | Connection session ID |
 | 16 | 4 | Argument A |
 | 20 | 4 | Argument B |
-| 24 | 4 | Payload length, 0..1024 |
+| 24 | 4 | Payload length, 0..16384 |
 | 28 | length | Payload |
 
 One WebSocket message contains exactly one envelope plus its payload. Control
@@ -91,17 +94,17 @@ Disconnect clears queued actions and emits keyboard/mouse release reports.
 
 | Op | Direction | Meaning |
 | --- | --- | --- |
-| 30 | host to Pico | attach: A=65536 sectors, B=512 bytes, empty payload |
+| 30 | host to Pico | attach: A=1..2147483647 sectors, B=512 bytes; empty payload means writable, or one byte 0=writable / 1=read-only |
 | 31 | host to Pico | detach: empty payload; rejected while I/O pending |
-| 40 | Pico to host | read: A=LBA, B=1; response payload exactly 512 bytes |
-| 41 | Pico to host | write: A=LBA, B=1; request payload exactly 512 bytes |
+| 40 | Pico to host | read: A=LBA, B=1..32 sectors; response payload exactly B*512 bytes |
+| 41 | Pico to host | write: A=LBA, B=1..32 sectors; request payload exactly B*512 bytes |
 | 42 | Pico to host | flush/export: A=B=0, empty payload |
 | 43 | Pico to host | eject/export: A=B=0, empty payload |
 
 Writes respond only after the host image write and `fsync` succeed. Success
 responses to writes, flush, eject, and control operations have empty payloads.
-Only one sector or synchronization operation is outstanding on the Pico. Each
-sector has a five-second deadline; export/flush/eject has 30 seconds. Late,
+Only one block batch or synchronization operation is outstanding on the Pico.
+Each batch has a five-second deadline; export/flush/eject has 30 seconds. Late,
 duplicate, wrong-session, and unexpected responses disconnect the control peer.
 Timeout, backend failure, or disconnect fails the USB operation and removes
 media. No upload is cached awaiting a future client.
@@ -111,6 +114,29 @@ and START STOP UNIT (stop/eject) use a small pinned TinyUSB extension to defer
 the command-status wrapper until the host replies. IMMED flush is rejected.
 Media replacement signals unit attention. BOT reset cancels outstanding I/O;
 an interrupted operation requires reattachment. No flash writes occur at runtime.
+
+Capacity is reported from the active attachment. Read-only media reports SCSI
+write protection and rejects WRITE(10) with DATA PROTECT / WRITE PROTECTED
+(sense 07/27/00), before any network write. The host backend independently rejects
+writes too. Batches cannot cross the end of the image. No write-back cache exists
+in Pico RAM; a disconnect can leave earlier acknowledged batches intact and the
+last unacknowledged batch in an indeterminate state.
+
+## Raw images
+
+`serve_image(path, read_only=True)` exposes the complete existing regular file,
+including partition tables, boot sectors, and filesystem journals. Files must
+contain whole 512-byte sectors, with capacity below 1 TiB. No parsing, conversion,
+directory export, or filesystem repair is performed. NTFS, FAT, and other layouts
+are transported identically. Use `read_only=False` explicitly for writes to the
+original image, and use a disposable copy for experiments. This is not an overlay.
+
+An exclusive operating-system lock prevents another cooperating image server
+from attaching the same file and is released automatically on process exit.
+Do not edit, truncate, mount, or replace the image concurrently. Flush/eject
+fsyncs writable images. Filesystem recovery belongs to the USB host OS; durable
+sector acknowledgments do not make multi-sector transactions atomic or recover
+writes still in the target's cache. Reattach is explicit after a disconnect.
 
 ## FAT and directory ownership
 

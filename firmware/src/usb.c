@@ -99,7 +99,7 @@ void usb_reports(void) {
 void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor[8], uint8_t product[16], uint8_t rev[4]) {
     (void)lun;
     memcpy(vendor, "PICOUSB ", 8);
-    memcpy(product, "REMOTE FAT16    ", 16);
+    memcpy(product, "REMOTE DISK     ", 16);
     memcpy(rev, "0100", 4);
 }
 bool tud_msc_test_unit_ready_cb(uint8_t lun) {
@@ -116,15 +116,15 @@ bool tud_msc_test_unit_ready_cb(uint8_t lun) {
 }
 void tud_msc_capacity_cb(uint8_t lun, uint32_t *count, uint16_t *size) {
     (void)lun;
-    *count = DB_SECTORS;
+    *count = device.sectors;
     *size = 512;
 }
 bool tud_msc_is_writable_cb(uint8_t lun) {
     (void)lun;
-    return device.media;
+    return device.media && !device.read_only;
 }
-static int32_t begin(uint8_t op, uint32_t lba, const uint8_t *data) {
-    if (!db_storage_begin(&device, op, lba, data, to_ms_since_boot(get_absolute_time()))) {
+static int32_t begin(uint8_t op, uint32_t lba, const uint8_t *data, uint32_t n) {
+    if (!db_storage_begin_blocks(&device, op, lba, data, to_ms_since_boot(get_absolute_time()), n)) {
         tud_msc_set_sense(0, SCSI_SENSE_NOT_READY, 0x3a, 0);
         return TUD_MSC_RET_ERROR;
     }
@@ -132,20 +132,23 @@ static int32_t begin(uint8_t op, uint32_t lba, const uint8_t *data) {
 }
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t n) {
     (void)lun;
-    if (offset || n != 512)
+    if (offset || !n || n > DB_PAYLOAD || n % 512)
         return -1;
     read_buffer = buffer;
-    int32_t r = begin(DB_READ, lba, NULL);
+    int32_t r = begin(DB_READ, lba, NULL, n);
     if (r != -2)
         read_buffer = NULL;
     return r;
 }
 int32_t tud_msc_write10_cb(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer,
                            uint32_t n) {
-    (void)lun;
-    if (offset || n != 512)
+    if (device.read_only) {
+        tud_msc_set_sense(lun, 0x07, 0x27, 0);
+        return TUD_MSC_RET_ERROR;
+    }
+    if (offset || !n || n > DB_PAYLOAD || n % 512)
         return -1;
-    return begin(DB_WRITE, lba, buffer);
+    return begin(DB_WRITE, lba, buffer, n);
 }
 bool tud_msc_prevent_allow_medium_removal_cb(uint8_t lun, uint8_t prohibit, uint8_t control) {
     (void)lun;
@@ -160,7 +163,7 @@ int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t cmd[16], void *buf, uint16_t 
     if (cmd[0] == 0x35) {
         if (cmd[1] & 2)
             return -1;
-        return begin(DB_FLUSH, 0, NULL);
+        return begin(DB_FLUSH, 0, NULL, 0);
     }
     if (cmd[0] == 0x1b) {
         if ((cmd[4] & 3) == 2) {
@@ -168,25 +171,25 @@ int32_t tud_msc_scsi_cb(uint8_t lun, const uint8_t cmd[16], void *buf, uint16_t 
                 tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x53, 2);
                 return -1;
             }
-            return begin(DB_EJECT, 0, NULL);
+            return begin(DB_EJECT, 0, NULL, 0);
         }
         if (cmd[4] & 1)
             return device.media ? 0 : -1;
-        return begin(DB_FLUSH, 0, NULL);
+        return begin(DB_FLUSH, 0, NULL, 0);
     }
     tud_msc_set_sense(lun, SCSI_SENSE_ILLEGAL_REQUEST, 0x20, 0);
     return -1;
 }
 void usb_complete(void *ctx, bool ok, const uint8_t *data, size_t n) {
     (void)ctx;
-    if (ok && read_buffer && n == 512)
-        memcpy(read_buffer, data, 512);
+    if (ok && read_buffer && n == device.pending_bytes)
+        memcpy(read_buffer, data, n);
     read_buffer = NULL;
     if (!ok)
         tud_msc_set_sense(0, SCSI_SENSE_MEDIUM_ERROR, 0x11, 0);
     if (ok && device.pending_op == DB_EJECT)
         device.media = false;
-    tud_msc_async_io_done(ok ? (device.pending_op <= DB_WRITE ? 512 : 1) : -1, false);
+    tud_msc_async_io_done(ok ? (device.pending_op <= DB_WRITE ? (int32_t)device.pending_bytes : 1) : -1, false);
 }
 /* Patched TinyUSB calls this before invalidating an outstanding BOT operation. */
 void tud_msc_abort_cb(void) {

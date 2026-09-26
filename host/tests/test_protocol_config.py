@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from pico_devbox.protocol import HEADER, DevBoxError, Message, Op
+from pico_devbox.protocol import HEADER, MAX_PAYLOAD, DevBoxError, Message, Op
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("config_block", ROOT / "tools/config_block.py")
@@ -15,7 +15,7 @@ spec.loader.exec_module(config)
 
 
 def test_protocol_roundtrip() -> None:
-    for n in (0, 1, 512, 1024):
+    for n in (0, 1, 512, 1024, MAX_PAYLOAD):
         m = Message(Op.WRITE, 123, 9, 65535, 1, bytes(n))
         assert Message.decode(m.encode()) == m
 
@@ -30,7 +30,7 @@ def test_malformed(data: bytes | str) -> None:
 
 def test_size_limit_and_reserved() -> None:
     with pytest.raises(DevBoxError):
-        Message(1, 1, payload=bytes(1025)).encode()
+        Message(1, 1, payload=bytes(MAX_PAYLOAD + 1)).encode()
     frame = bytearray(Message(1, 1).encode())
     frame[6] = 1
     with pytest.raises(DevBoxError):

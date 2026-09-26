@@ -120,7 +120,7 @@ def test_lock_and_host_edits(tmp_path: Path) -> None:
     disk.close()
 
 
-@pytest.mark.parametrize("lba,count", [(-1, 1), (65536, 1), (65535, 2), (0, 0), (0, 3)])
+@pytest.mark.parametrize("lba,count", [(-1, 1), (65536, 1), (65535, 2), (0, 0), (0, 33)])
 def test_sector_bounds(tmp_path: Path, lba: int, count: int) -> None:
     disk = DirectoryDisk(tmp_path)
     with pytest.raises(StorageError):

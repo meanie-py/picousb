@@ -6,7 +6,7 @@ from enum import IntEnum
 
 HEADER = struct.Struct("<4sBBHIIIII")
 MAGIC = b"PDB1"
-MAX_PAYLOAD = 1024
+MAX_PAYLOAD = 16384
 RESPONSE = 0x80
 SECTORS = 65536
 SECTOR_SIZE = 512

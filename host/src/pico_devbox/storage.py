@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
-from .protocol import SECTOR_SIZE, SECTORS
+from .protocol import MAX_PAYLOAD, SECTOR_SIZE, SECTORS
 
 FAT_SECTORS = 128
 ROOT_SECTORS = 32
@@ -254,7 +254,7 @@ class DirectoryDisk:
         return self.file
 
     def read(self, lba: int, count: int = 1) -> bytes:
-        if not 0 <= lba < SECTORS or not 1 <= count <= 2 or lba + count > SECTORS:
+        if not 0 <= lba < SECTORS or not 1 <= count <= MAX_PAYLOAD // 512 or lba + count > SECTORS:
             raise StorageError("sector outside volume")
         f = self._io()
         f.seek(lba * 512)
@@ -264,7 +264,12 @@ class DirectoryDisk:
         return data
 
     def write(self, lba: int, data: bytes) -> None:
-        if len(data) not in (512, 1024) or not 0 <= lba or lba + len(data) // 512 > SECTORS:
+        if (
+            not 512 <= len(data) <= MAX_PAYLOAD
+            or len(data) % 512
+            or not 0 <= lba
+            or lba + len(data) // 512 > SECTORS
+        ):
             raise StorageError("invalid sector write")
         f = self._io()
         f.seek(lba * 512)

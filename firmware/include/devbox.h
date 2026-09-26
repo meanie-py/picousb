@@ -5,7 +5,7 @@
 #include <stdint.h>
 #define DB_CONFIG_SIZE 4096
 #define DB_HEADER 28
-#define DB_PAYLOAD 1024
+#define DB_PAYLOAD 16384
 #define DB_MAX (DB_HEADER + DB_PAYLOAD)
 #define DB_SECTORS 65536u
 #define DB_REPORTS 256
@@ -56,10 +56,12 @@ typedef struct {
     db_send_fn send;
     db_complete_fn complete;
     void *ctx;
-    bool authenticated, media, changed, pending;
+    bool authenticated, media, changed, pending, read_only;
+    uint32_t sectors;
     uint8_t pending_op;
     uint32_t session, next_storage, pending_id, deadline;
     uint32_t last_request;
+    uint32_t pending_bytes;
 } db_device;
 uint32_t db_crc32(const uint8_t *, size_t);
 bool db_config_read(db_config *, const uint8_t *, size_t);
@@ -75,5 +77,6 @@ void db_connect(db_device *);
 void db_disconnect(db_device *);
 bool db_receive(db_device *, const uint8_t *, size_t);
 bool db_storage_begin(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t);
+bool db_storage_begin_blocks(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t, uint32_t);
 void db_tick(db_device *, uint32_t);
 #endif

@@ -3,12 +3,12 @@
 import asyncio
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
-from .protocol import RESPONSE, SECTORS, DevBoxError, Message, Op
+from .image import ImageDisk
+from .protocol import HEADER, MAX_PAYLOAD, RESPONSE, SECTORS, DevBoxError, Message, Op
 from .storage import DirectoryDisk
 
 KEYS = {
@@ -115,14 +115,35 @@ class Mouse:
 class Storage:
     def __init__(self, box: "DevBox") -> None:
         self.box = box
-        self.disk: DirectoryDisk | None = None
+        self.disk: DirectoryDisk | ImageDisk | None = None
         self.lock = asyncio.Lock()
         self.ejected = asyncio.Event()
+        self.read_bytes = 0
+        self.written_bytes = 0
+        self.requests = 0
+        self.errors = 0
 
     async def serve_directory(self, path: str | Path) -> None:
+        await self._attach(path, image=False, read_only=False)
+
+    async def serve_image(self, path: str | Path, *, read_only: bool = True) -> None:
+        """Expose an existing raw disk image; writable access must be explicit."""
+        await self._attach(path, image=True, read_only=read_only)
+
+    async def _attach(self, path: str | Path, *, image: bool, read_only: bool) -> None:
+        async with self.lock:
+            await self._open_attach(path, image=image, read_only=read_only)
+
+    async def _open_attach(self, path: str | Path, *, image: bool, read_only: bool) -> None:
         if self.disk is not None:
             raise DevBoxError(4, "storage already attached")
-        opening = asyncio.create_task(asyncio.to_thread(DirectoryDisk, path))
+
+        async def open_disk() -> DirectoryDisk | ImageDisk:
+            if image:
+                return await asyncio.to_thread(ImageDisk, path, read_only=read_only)
+            return await asyncio.to_thread(DirectoryDisk, path)
+
+        opening = asyncio.create_task(open_disk())
         try:
             self.disk = await asyncio.shield(opening)
         except asyncio.CancelledError:
@@ -131,7 +152,8 @@ class Storage:
             raise
         self.ejected.clear()
         try:
-            await self.box.request(Op.ATTACH, SECTORS, 512)
+            sectors = self.disk.sectors if isinstance(self.disk, ImageDisk) else SECTORS
+            await self.box.request(Op.ATTACH, sectors, 512, bytes([read_only]) if image else b"")
         except BaseException:
             self.disk.close()
             self.disk = None
@@ -154,10 +176,16 @@ class Storage:
             try:
                 if self.disk is None:
                     raise DevBoxError(5, "storage unavailable")
-                if m.op == Op.READ and m.b == 1 and not m.payload:
-                    data = await asyncio.to_thread(self.disk.read, m.a)
-                elif m.op == Op.WRITE and m.b == 1 and len(m.payload) == 512:
+                if m.op == Op.READ and 1 <= m.b <= MAX_PAYLOAD // 512 and not m.payload:
+                    data = await asyncio.to_thread(self.disk.read, m.a, m.b)
+                    self.read_bytes += len(data)
+                elif (
+                    m.op == Op.WRITE
+                    and 1 <= m.b <= MAX_PAYLOAD // 512
+                    and len(m.payload) == m.b * 512
+                ):
                     await asyncio.to_thread(self.disk.write, m.a, m.payload)
+                    self.written_bytes += len(m.payload)
                 elif m.op in (Op.FLUSH, Op.EJECT) and not m.payload and not m.a and not m.b:
                     await asyncio.to_thread(self.disk.export)
                 else:
@@ -165,6 +193,8 @@ class Storage:
             except Exception:
                 # Never transmit filenames, local paths, contents, or exception strings.
                 status = 6
+                self.errors += 1
+            self.requests += 1
         await self.box._send(Message(m.op | RESPONSE, m.id, m.session, payload=data, status=status))
         if m.op == Op.EJECT and not status:
             self.ejected.set()
@@ -187,7 +217,7 @@ class DevBox:
         await self.connect()
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
     async def connect(self) -> None:
@@ -197,7 +227,7 @@ class DevBox:
         self._queue = asyncio.Queue(maxsize=4)
         self.ws = await connect(
             self.uri,
-            max_size=1052,
+            max_size=HEADER.size + MAX_PAYLOAD,
             max_queue=4,
             compression=None,
             open_timeout=self.timeout,

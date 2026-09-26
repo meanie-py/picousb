@@ -9,7 +9,7 @@
 #include <strings.h>
 extern db_device device;
 static struct tcp_pcb *peer;
-static uint8_t rx[4096];
+static uint8_t rx[DB_MAX + 8 + TCP_MSS];
 static size_t used;
 static bool upgraded, closing;
 static uint32_t opened;
@@ -23,7 +23,7 @@ static bool send_raw(const void *p, size_t n) {
 }
 bool network_send(void *ctx, const uint8_t *p, size_t n) {
     (void)ctx;
-    uint8_t frame[DB_MAX + 4];
+    static uint8_t frame[DB_MAX + 4];
     size_t len = ws_encode(frame, 2, p, n);
     bool ok = upgraded && send_raw(frame, len);
     if (!ok)
@@ -132,7 +132,8 @@ static bool parse(void) {
             return false;
     }
     while (used) {
-        uint8_t op, data[DB_MAX];
+        uint8_t op;
+        static uint8_t data[DB_MAX];
         size_t len = 0;
         int consumed = ws_decode(rx, used, &op, data, &len);
         if (consumed < 0)
@@ -145,7 +146,7 @@ static bool parse(void) {
         } else if (op == 8)
             return false;
         else if (op == 9) {
-            uint8_t pong[DB_MAX + 4];
+            uint8_t pong[129];
             size_t n = ws_encode(pong, 10, data, len);
             if (!send_raw(pong, n))
                 return false;

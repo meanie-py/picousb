@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pico-devbox"
-version = "0.1.0"
-description = "Pico 2 W USB control and directory-backed FAT storage"
+version = "0.2.0"
+description = "Pico 2 W USB control, directory-backed FAT, and raw image storage"
 requires-python = ">=3.11"
 dependencies = ["websockets>=14,<16"]
 

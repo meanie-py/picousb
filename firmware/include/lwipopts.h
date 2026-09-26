@@ -23,12 +23,12 @@
 #ifndef MEM_ALIGNMENT
 #define MEM_ALIGNMENT 4
 #endif
-#define MEM_SIZE 32768
+#define MEM_SIZE 65536
 #define MEMP_NUM_TCP_PCB 4
 #define MEMP_NUM_TCP_SEG 32
 #define TCP_MSS 1460
-#define TCP_WND (4 * TCP_MSS)
-#define TCP_SND_BUF (4 * TCP_MSS)
+#define TCP_WND (16 * TCP_MSS)
+#define TCP_SND_BUF (16 * TCP_MSS)
 #define TCP_SND_QUEUELEN 32
 #define PBUF_POOL_SIZE 24
 #define LWIP_CHECKSUM_CTRL_PER_NETIF 0

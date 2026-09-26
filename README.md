@@ -1,8 +1,9 @@
 # picousb / Pico DevBox
 
 Pico 2 W firmware and an async Python host client for exercising USB on a custom
-OS running on a Raspberry Pi. The Pico exposes a keyboard, mouse, and FAT16
-removable drive; the development host controls them over Wi-Fi.
+OS running on a Raspberry Pi. The Pico exposes a keyboard, mouse, and removable
+disk; the development host controls them over Wi-Fi. Storage can be a directory
+backed by FAT16 or an existing raw disk image.
 
 **Status:** Wi-Fi authentication, keyboard/mouse input, and directory-backed USB
 reads/writes/eject have passed on a real Pico 2 W with Windows. Custom-target OS,
@@ -147,6 +148,8 @@ pico-devbox key CTRL ALT DELETE
 pico-devbox mouse move 50 -20
 pico-devbox mouse click left
 pico-devbox serve ./virtual-drive
+pico-devbox serve-image ./os.img                 # read-only by default
+pico-devbox serve-image ./disposable.img --writable
 ```
 
 Do not launch a second CLI while `serve` owns the session; use the library for
@@ -157,7 +160,7 @@ intentional test target. Disconnect releases held keys and buttons.
 
 The host manages a **32 MiB FAT16 superfloppy image** under `.picousb/` in the
 backing directory. Users configure a directory, not an image. Host-side FAT keeps
-Pico RAM bounded and makes recovery testable. The Pico proxies one bounded sector
+Pico RAM bounded and makes recovery testable. The Pico proxies one bounded block
 operation at a time without blocking USB callbacks or holding an entire disk.
 
 Import occurs once; the target then owns the volume exclusively. Do not edit the
@@ -178,6 +181,33 @@ Known limits: fixed FAT16 geometry, ASCII 8.3 names, up to 16 directory levels,
 No automatic merge of host edits or interrupted-export repair. Full power-loss
 durability depends on host filesystem guarantees. USB-powered availability
 depends on target USB power. UART streaming is deferred.
+
+## Raw images and boot media
+
+Use `await box.storage.serve_image("os.img")` to expose an existing raw disk
+image as the USB disk itself. Unlike placing an `.img` file inside a served
+directory, this preserves partition tables, boot sectors, long filenames, and
+non-FAT filesystems such as NTFS. Capacity comes from the file (whole 512-byte
+sectors, below 1 TiB). Neither the disk nor large files are held in Pico RAM.
+Transfers are bounded to 16 KiB per request; larger host I/O is streamed.
+Update host and firmware together for this larger-transfer protocol extension.
+
+Images are read-only by default. `read_only=False` or CLI `--writable` modifies
+the original image directly, with each write fsynced before acknowledgment.
+Use disposable copies for development. There is no copy-on-write overlay or
+additional filesystem journal: Windows owns NTFS journaling and recovery.
+Safe eject remains necessary. Host process exit releases the image lock;
+reconnect and reattach explicitly. Do not mount or edit the image concurrently.
+
+An appropriately prepared image could provide boot media for the target Pi 4B
+or future Pi 5, but **actual Pi boot acceptance is pending**. A QEMU artifact is
+not necessarily a Pi boot image. USB bootloader compatibility and readiness
+before its timeout must be checked, particularly when target reboot cuts Pico
+USB power. The existing UART/debugging target is not needed for Windows tests.
+
+See [image testing](docs/image-testing.md) for a disposable NTFS workflow,
+large-transfer checks, and the distinction between transport persistence and
+filesystem crash recovery.
 
 ## Security and testing
 

@@ -313,6 +313,7 @@ void db_init(db_device *d, const db_config *c, db_send_fn send, db_complete_fn c
     d->complete = complete;
     d->ctx = ctx;
     d->next_storage = 0x80000000u;
+    d->sectors = DB_SECTORS;
 }
 void db_disconnect(db_device *d) {
     d->authenticated = false;
@@ -331,7 +332,7 @@ void db_connect(db_device *d) {
     d->last_request = 0;
 }
 static bool send_message(db_device *d, const db_message *m) {
-    uint8_t buf[DB_MAX];
+    static uint8_t buf[DB_MAX]; /* Single-threaded transport; keep bulk data off stack. */
     size_t n = db_encode(buf, m);
     return n && d->send(d->ctx, buf, n);
 }
@@ -343,7 +344,7 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         if (!d->authenticated || m.session != d->session || !d->pending || m.id != d->pending_id ||
             m.op != (d->pending_op | 128))
             return false;
-        bool ok = !m.status && m.length == (d->pending_op == DB_READ ? 512u : 0u);
+        bool ok = !m.status && m.length == (d->pending_op == DB_READ ? d->pending_bytes : 0u);
         d->pending = false;
         if (!ok)
             d->media = false;
@@ -372,13 +373,16 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
     } else if (m.op == DB_ATTACH) {
-        if (m.a != DB_SECTORS || m.b != 512 || m.length)
+        if (!m.a || m.a > 0x7fffffffu || m.b != 512 ||
+            (m.length && (m.length != 1 || m.data[0] > 1)))
             r.status = DB_ARGUMENT;
         else if (d->media || d->pending)
             r.status = DB_BUSY;
         else {
             d->media = true;
             d->changed = true;
+            d->sectors = m.a;
+            d->read_only = m.length && m.data[0];
         }
     } else if (m.op == DB_DETACH) {
         if (m.a || m.b || m.length)
@@ -394,7 +398,18 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
     return send_message(d, &r);
 }
 bool db_storage_begin(db_device *d, uint8_t op, uint32_t lba, const uint8_t *data, uint32_t now) {
-    if (!d->authenticated || !d->media || d->pending || lba >= DB_SECTORS ||
+    return db_storage_begin_blocks(d, op, lba, data, now, op <= DB_WRITE ? 512 : 0);
+}
+bool db_storage_begin_blocks(db_device *d, uint8_t op, uint32_t lba, const uint8_t *data,
+                            uint32_t now, uint32_t bytes) {
+    bool blocks = op == DB_READ || op == DB_WRITE;
+    if (blocks ? (!bytes || bytes > DB_PAYLOAD || bytes % 512 ||
+                  lba >= d->sectors || bytes / 512 > d->sectors - lba) : (bytes || lba))
+        return false;
+    if (op == DB_WRITE && !data)
+        return false;
+    if (!d->authenticated || !d->media || d->pending || lba >= d->sectors ||
+        (op == DB_WRITE && d->read_only) ||
         d->next_storage == UINT32_MAX)
         return false;
     if (op < DB_READ || op > DB_EJECT)
@@ -403,12 +418,13 @@ bool db_storage_begin(db_device *d, uint8_t op, uint32_t lba, const uint8_t *dat
                     .id = ++d->next_storage,
                     .session = d->session,
                     .a = lba,
-                    .b = (op == DB_READ || op == DB_WRITE) ? 1 : 0,
-                    .length = op == DB_WRITE ? 512 : 0,
+                    .b = blocks ? bytes / 512 : 0,
+                    .length = op == DB_WRITE ? bytes : 0,
                     .data = data};
     d->pending = true;
     d->pending_id = m.id;
     d->pending_op = op;
+    d->pending_bytes = bytes;
     d->deadline = now + (op >= DB_FLUSH ? 30000 : 5000);
     if (!send_message(d, &m)) {
         d->pending = false;
