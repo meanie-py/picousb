@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pico-devbox"
+version = "0.1.0"
+description = "Pico 2 W USB control and directory-backed FAT storage"
+requires-python = ">=3.11"
+dependencies = ["websockets>=14,<16"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.9", "mypy>=1.14", "pytest-cov>=6"]
+
+[project.scripts]
+pico-devbox = "pico_devbox.cli:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+strict = true

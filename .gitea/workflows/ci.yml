@@ -1,0 +1,22 @@
+name: Build and test
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System dependencies
+        run: |
+          elevate=""
+          if [ "$(id -u)" -ne 0 ]; then elevate=sudo; fi
+          $elevate apt-get update -qq
+          $elevate apt-get install -y cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi libstdc++-arm-none-eabi-newlib python3-venv dosfstools mtools libusb-1.0-0-dev git g++
+      - name: Python dependencies
+        run: |
+          python3 -m venv build/venv
+          build/venv/bin/pip install -e './host[dev]'
+      - name: Portable firmware, Python, protocol and FAT tests
+        run: PYTHON="$PWD/build/venv/bin/python" bash tools/test.sh
+      - name: Pico 2 W compilation
+        run: bash tools/build.sh
+      # Never run provisioning or upload config/provisioned UF2 files in CI.

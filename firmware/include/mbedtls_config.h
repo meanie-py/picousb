@@ -1,0 +1,5 @@
+#ifndef DEVBOX_MBEDTLS_CONFIG_H
+#define DEVBOX_MBEDTLS_CONFIG_H
+#define MBEDTLS_SHA1_C
+#define MBEDTLS_BASE64_C
+#endif
