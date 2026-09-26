@@ -135,7 +135,29 @@ Disconnect clears queued actions and emits keyboard/mouse release reports.
 
 Writes respond only after the host image write and `fsync` succeed. Success
 responses to writes, flush, eject, and control operations have empty payloads.
-Only one block batch or synchronization operation is outstanding on the Pico.
+Only one network block batch or synchronization operation is outstanding on the Pico.
+After a successful full 16 KiB read, the Pico may fetch the next sequential batch
+into one additional 16 KiB buffer while USB transmits the current batch. The
+prediction is clamped at the end of the medium. Smaller reads do not initiate
+prediction; a requested subrange may consume a ready cached batch.
+
+One foreground USB operation may wait behind an in-flight prediction. A different
+read waits for that response and then requests its own blocks if the cache does
+not cover it. Writes and flush/eject invalidate cached data and discard an
+in-flight prediction before starting their own operation. Prefetch replies never
+complete USB operations directly. Cache consumption and all network submissions
+run from the main loop, avoiding callback reentrancy or waits inside TinyUSB.
+Session/media changes and BOT reset invalidate the cache and queued ownership.
+The queued foreground operation can wait for the remainder of the speculative
+request's deadline before its own network deadline starts; these are per-network
+request limits, not a hard end-to-end USB completion deadline.
+An error/timeout on a speculative request conservatively makes media unavailable;
+it does not fabricate a USB completion when no foreground request is waiting.
+
+Read timing counters include successful speculative network fetches. USB read
+counters include cache hits, so their counts need not match. Failed or unused
+predictions are not evidence of data delivered to USB. Network and USB timing
+intervals now overlap and their totals must not be added as elapsed wall time.
 Each batch has a five-second deadline; export/flush/eject has 30 seconds. Late,
 duplicate, wrong-session, and unexpected responses disconnect the control peer.
 Timeout, backend failure, or disconnect fails the USB operation and removes

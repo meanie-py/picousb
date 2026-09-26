@@ -64,6 +64,7 @@ typedef struct {
     uint32_t session, next_storage, pending_id, deadline;
     uint32_t last_request;
     uint32_t pending_bytes;
+    uint32_t media_generation;
     db_metric metrics[DB_METRIC_COUNT];
 } db_device;
 uint32_t db_crc32(const uint8_t *, size_t);

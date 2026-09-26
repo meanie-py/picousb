@@ -192,6 +192,10 @@ directory, this preserves partition tables, boot sectors, long filenames, and
 non-FAT filesystems such as NTFS. Capacity comes from the file (whole 512-byte
 sectors, below 1 TiB). Neither the disk nor large files are held in Pico RAM.
 Transfers are bounded to 16 KiB per request; larger host I/O is streamed.
+One additional 16 KiB read-ahead buffer overlaps sequential network reads with
+USB transfers. Random reads fall back to requested blocks; writes, flush/eject,
+disconnects, and media changes invalidate predictions. Writes are still persisted
+on the host before acknowledgment; this is not a write-back cache or a journal.
 Update host and firmware together for this larger-transfer protocol extension.
 
 Images are read-only by default. `read_only=False` or CLI `--writable` modifies

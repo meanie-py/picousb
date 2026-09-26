@@ -78,7 +78,9 @@ ground. Do not imply GPIO UART supplies target power or reset control.
   filesystem journals belong to the target filesystem, not the Pico.
 - MSC requests blocks, never filenames. The Pico holds bounded buffers, not an
   entire image. Current transfers allow one outstanding batch of up to 32 sectors
-  (16 KiB); USB callbacks complete asynchronously after the host response.
+  (16 KiB) over the network. One additional 16 KiB read-ahead buffer overlaps the
+  next sequential fetch with the current USB transfer; writes remain durable
+  before acknowledgment. See `storage_pipeline.c` for ownership/invalidation.
 - The host persists writes before acknowledging them. Offline/failed writes must
   fail. Disconnect/reset/timeout must cancel ownership safely and reject stale
   replies; reconnect must not silently discard or replace unsynchronized media.

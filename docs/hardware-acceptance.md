@@ -38,6 +38,13 @@ board/target/host versions when running them. Never include credentials in evide
 
 ## Acceptance gates
 
+Read-ahead follow-up on 2026-09-26: [detailed results](read-ahead-2026-09-26.md).
+A complete deterministic 64 MiB file verified in 110.914 seconds (0.577 MiB/s),
+with zero backend errors. Scattered reads and writable NTFS metadata passed;
+a new 2 MiB file and sector overwrite verified after safe eject/reattach.
+Normal Wi-Fi power management is restored. Existing unchecked physical fault
+gates below remain unchecked; software cancellation coverage is not hardware proof.
+
 ### Raw-image / NTFS acceptance (2026-09-26)
 
 Pico 2 W running the normal (diagnostics-off) image-mode firmware from `e5b6f8c`;

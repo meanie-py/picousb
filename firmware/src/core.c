@@ -316,6 +316,7 @@ void db_init(db_device *d, const db_config *c, db_send_fn send, db_complete_fn c
     d->sectors = DB_SECTORS;
 }
 void db_disconnect(db_device *d) {
+    d->media_generation++;
     d->authenticated = false;
     d->media = false;
     db_hid_reset(&d->hid);
@@ -400,6 +401,7 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         else if (d->media || d->pending)
             r.status = DB_BUSY;
         else {
+            d->media_generation++;
             d->media = true;
             d->changed = true;
             d->sectors = m.a;
@@ -411,6 +413,7 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         else if (d->pending)
             r.status = DB_BUSY;
         else {
+            d->media_generation++;
             d->media = false;
             d->changed = true;
         }

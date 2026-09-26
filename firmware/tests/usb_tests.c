@@ -59,6 +59,25 @@ int32_t tud_msc_read10_cb(uint8_t, uint32_t, uint32_t, void *, uint32_t);
 int32_t tud_msc_write10_cb(uint8_t, uint32_t, uint32_t, uint8_t *, uint32_t);
 int32_t tud_msc_scsi_cb(uint8_t, const uint8_t *, void *, uint16_t);
 uint16_t tud_hid_get_report_cb(uint8_t, uint8_t, hid_report_type_t, uint8_t *, uint16_t);
+void usb_storage_tick(void);
+static int32_t read_request(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t n) {
+    int32_t result = tud_msc_read10_cb(lun, lba, offset, buffer, n);
+    usb_storage_tick();
+    return result;
+}
+static int32_t write_request(uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t n) {
+    int32_t result = tud_msc_write10_cb(lun, lba, offset, buffer, n);
+    usb_storage_tick();
+    return result;
+}
+static int32_t scsi_request(uint8_t lun, const uint8_t *cmd, void *buffer, uint16_t n) {
+    int32_t result = tud_msc_scsi_cb(lun, cmd, buffer, n);
+    usb_storage_tick();
+    return result;
+}
+#define tud_msc_read10_cb read_request
+#define tud_msc_write10_cb write_request
+#define tud_msc_scsi_cb scsi_request
 int main(void) {
     db_config c = {0};
     db_init(&device, &c, send, usb_complete, NULL);

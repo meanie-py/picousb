@@ -1,4 +1,5 @@
 #include "devbox.h"
+#include "storage_pipeline.h"
 #include "pico/time.h"
 #include "tusb.h"
 #include <string.h>
@@ -11,6 +12,17 @@ static uint8_t *read_buffer;
 static bool prevent_removal;
 static bool timing_network, timing_read;
 static uint32_t network_started, read_started;
+static void deliver(void *, uint8_t, bool, const uint8_t *, uint32_t);
+static db_pipeline pipeline = {.device = &device, .done = deliver};
+void usb_storage_tick(void) {
+    bool pending = device.pending;
+    uint32_t started = time_us_32();
+    db_pipeline_tick(&pipeline, to_ms_since_boot(get_absolute_time()));
+    if (!pending && device.pending) {
+        timing_network = device.pending_op == DB_READ || device.pending_op == DB_WRITE;
+        network_started = started;
+    }
+}
 static const uint8_t keyboard_desc[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
 static const uint8_t mouse_desc[] = {TUD_HID_REPORT_DESC_MOUSE()};
 static const tusb_desc_device_t desc = {.bLength = sizeof(tusb_desc_device_t),
@@ -126,13 +138,10 @@ bool tud_msc_is_writable_cb(uint8_t lun) {
     return device.media && !device.read_only;
 }
 static int32_t begin(uint8_t op, uint32_t lba, const uint8_t *data, uint32_t n) {
-    uint32_t started = time_us_32();
-    if (!db_storage_begin_blocks(&device, op, lba, data, to_ms_since_boot(get_absolute_time()), n)) {
+    if (!db_pipeline_start(&pipeline, op, lba, data, n)) {
         tud_msc_set_sense(0, SCSI_SENSE_NOT_READY, 0x3a, 0);
         return TUD_MSC_RET_ERROR;
     }
-    timing_network = op == DB_READ || op == DB_WRITE;
-    network_started = started;
     return TUD_MSC_RET_ASYNC;
 }
 int32_t tud_msc_read10_cb(uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t n) {
@@ -192,16 +201,21 @@ void usb_complete(void *ctx, bool ok, const uint8_t *data, size_t n) {
         db_metric_add(&device.metrics[device.pending_op == DB_READ ? DB_NET_READ : DB_NET_WRITE],
                       now - network_started);
     timing_network = false;
-    timing_read = ok && read_buffer && n == device.pending_bytes;
+    db_pipeline_complete(&pipeline, ok, data, n);
+}
+static void deliver(void *ctx, uint8_t op, bool ok, const uint8_t *data, uint32_t n) {
+    (void)ctx;
+    uint32_t now = time_us_32();
+    timing_read = ok && op == DB_READ && read_buffer;
     read_started = now;
-    if (ok && read_buffer && n == device.pending_bytes)
+    if (ok && op == DB_READ && read_buffer)
         memcpy(read_buffer, data, n);
     read_buffer = NULL;
     if (!ok)
         tud_msc_set_sense(0, SCSI_SENSE_MEDIUM_ERROR, 0x11, 0);
-    if (ok && device.pending_op == DB_EJECT)
+    if (ok && op == DB_EJECT)
         device.media = false;
-    tud_msc_async_io_done(ok ? (device.pending_op <= DB_WRITE ? (int32_t)device.pending_bytes : 1) : -1, false);
+    tud_msc_async_io_done(ok ? (op <= DB_WRITE ? (int32_t)n : 1) : -1, false);
 }
 /* Pinned TinyUSB hook: data-stage completion for EACH read batch, before
  * requesting the next one. Includes async dispatch and main-loop scheduling. */
@@ -215,9 +229,7 @@ void tud_msc_read_batch_complete_cb(uint32_t bytes) {
 void tud_msc_abort_cb(void) {
     timing_network = timing_read = false;
     read_buffer = NULL;
-    if (device.pending)
-        device.media = false;
-    device.pending = false;
+    db_pipeline_abort(&pipeline);
     prevent_removal = false;
 }
 void tud_umount_cb(void) {

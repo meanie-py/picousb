@@ -22,6 +22,7 @@ bool network_start(void);
 void network_tick(uint32_t, bool);
 void usb_complete(void *, bool, const uint8_t *, size_t);
 void usb_reports(void);
+void usb_storage_tick(void);
 int main(void) {
 #ifdef PICOUSB_DIAGNOSTICS
     if (watchdog_caused_reboot() && watchdog_hw->scratch[0] == 0x50444247)
@@ -123,6 +124,7 @@ int main(void) {
         network_tick(now, online);
         phase(8);
         db_tick(&device, now);
+        usb_storage_tick();
         phase(9);
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, online);
         phase(10);
