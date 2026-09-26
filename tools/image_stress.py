@@ -68,12 +68,21 @@ def eject(letter: str) -> None:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
         if not k.FlushFileBuffers(h):
-            raise ctypes.WinError(ctypes.get_last_error())
+            error = ctypes.get_last_error()
+            if error != 19:  # Read-only media has no writable cache to flush.
+                raise ctypes.WinError(error)
         returned = wintypes.DWORD()
         for code in (0x90018, 0x90020, 0x2D4808):
-            if not k.DeviceIoControl(h, code, None, 0, None, 0, ctypes.byref(returned), None):
-                raise ctypes.WinError(ctypes.get_last_error())
-        print("Volume flushed, locked, dismounted, and safely ejected.", flush=True)
+            for attempt in range(20):
+                if k.DeviceIoControl(h, code, None, 0, None, 0, ctypes.byref(returned), None):
+                    break
+                error = ctypes.get_last_error()
+                if code != 0x90018 or error != 5 or attempt == 19:
+                    raise ctypes.WinError(error)
+                # Volume queries / antivirus may briefly retain handles. Never
+                # proceed to dismount/eject unless the exclusive lock succeeds.
+                time.sleep(1)
+        print("Volume locked, dismounted, and safely ejected.", flush=True)
     finally:
         k.CloseHandle(h)
 
@@ -124,14 +133,105 @@ def transfer(args: argparse.Namespace) -> None:
     print(f"PASS: {args.action} {total} bytes in {elapsed:.1f}s", flush=True)
 
 
+def fault_write(letter: str) -> None:
+    root = identify(letter)
+    print("Fault write starting; stop only this image's backend to inject disconnect.", flush=True)
+    try:
+        with (root / "Interrupted transfer.bin").open("xb", buffering=0) as f:
+            for index in range(256):
+                data = hashlib.shake_256(f"fault:{index}".encode()).digest(1024**2)
+                f.write(data)
+                os.fsync(f.fileno())
+                print(f"Fault test acknowledged {index + 1} MiB", flush=True)
+    except OSError as exc:
+        if isinstance(exc, FileExistsError):
+            raise
+        print(
+            f"Interrupted USB write failed as expected (Windows error {exc.winerror}).", flush=True
+        )
+        return
+    raise RuntimeError("fault was not injected before write completed")
+
+
+def protected_write(letter: str) -> None:
+    root = identify(letter)
+    # Python's CRT file open maps ERROR_WRITE_PROTECT to generic EACCES.
+    # Query CreateFileW directly so the test verifies the actual Windows error.
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    k.CreateFileW.restype = wintypes.HANDLE
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = k.CreateFileW(
+        str(root / "Write protection probe.bin"), 0x40000000, 3, None, 1, 0, None
+    )
+    if handle == wintypes.HANDLE(-1).value:
+        error = ctypes.get_last_error()
+        if error != 19:
+            raise ctypes.WinError(error)
+        print("PASS: Windows reports write-protected media (error 19).", flush=True)
+        return
+    k.CloseHandle(handle)
+    raise RuntimeError("read-only media accepted a write")
+
+
+def metadata(letter: str) -> None:
+    root = identify(letter)
+    folder = root / "PicoUSB metadata test"
+    folder.mkdir()
+    source = folder / "Long Unicode filename \u03bb.txt"
+    for mode, data in (("xb", b"initial"), ("wb", b"overwritten content")):
+        with source.open(mode) as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    renamed = source.with_name("Renamed Unicode filename \u03bb.txt")
+    source.rename(renamed)
+    if renamed.read_bytes() != b"overwritten content":
+        raise RuntimeError("metadata test contents differ")
+    renamed.unlink()
+    folder.rmdir()
+    print("PASS: NTFS directory, Unicode filename, overwrite, rename, and deletion.", flush=True)
+
+
+def sample(letter: str) -> None:
+    root = identify(letter)
+    for index in range(4):
+        with (root / f"PicoUSB transfer {index}.bin").open("rb", buffering=0) as f:
+            for block, offset in ((0, 0), (63, 1024**2 - 4096)):
+                expected = hashlib.shake_256(f"picousb:{index}:{block}".encode()).digest(1024**2)
+                f.seek(block * 1024**2 + offset)
+                if f.read(4096) != expected[offset : offset + 4096]:
+                    raise RuntimeError("sample data mismatch")
+    print("PASS: first and last data samples from all four large files.", flush=True)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("action", choices=["write", "read", "eject"])
+    p.add_argument(
+        "action",
+        choices=["write", "read", "eject", "fault-write", "protected-write", "metadata", "sample"],
+    )
     p.add_argument("--drive", required=True)
     p.add_argument("--manifest", type=Path, default=Path("build/image-test/hashes.json"))
     args = p.parse_args()
     if args.action == "eject":
         eject(args.drive)
+    elif args.action == "fault-write":
+        fault_write(args.drive)
+    elif args.action == "protected-write":
+        protected_write(args.drive)
+    elif args.action == "metadata":
+        metadata(args.drive)
+    elif args.action == "sample":
+        sample(args.drive)
     else:
         transfer(args)
 

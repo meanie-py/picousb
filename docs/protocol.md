@@ -127,7 +127,9 @@ last unacknowledged batch in an indeterminate state.
 `serve_image(path, read_only=True)` exposes the complete existing regular file,
 including partition tables, boot sectors, and filesystem journals. Files must
 contain whole 512-byte sectors, with capacity below 1 TiB. No parsing, conversion,
-directory export, or filesystem repair is performed. NTFS, FAT, and other layouts
+or sector-size translation is performed: use images prepared for 512-byte logical
+sectors, not 4Kn media or CD-ROM layouts. There is no directory export or
+filesystem repair. NTFS, FAT, and other layouts
 are transported identically. Use `read_only=False` explicitly for writes to the
 original image, and use a disposable copy for experiments. This is not an overlay.
 

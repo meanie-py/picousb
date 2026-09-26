@@ -60,8 +60,20 @@ and replay its journal, check filesystem consistency with Windows `chkdsk`, and
 recheck hashes of previously completed files. Keep the interrupted file out of
 the success criteria: its unacknowledged/cached writes may be absent.
 
+`python tools/image_stress.py fault-write --drive F` provides the separate
+interruption workload. Wait for its acknowledged-byte output before stopping
+the backend. It creates a new `Interrupted transfer.bin`; an existing file is
+an error. After reattachment and filesystem checks, the `sample` action verifies
+known first/last bytes of the four large files. The `metadata` action tests a
+new disposable directory, Unicode names, overwrite, rename, and deletion.
+
 After a clean eject, serve without `--writable`. Windows writes must fail and
 reads must still match. No network storage write should reach the backend.
+Use the `protected-write` action: it calls the native Windows file API to require
+ERROR_WRITE_PROTECT (19). Python's regular file API can reduce that error to
+generic EACCES, which is not enough evidence by itself. The `eject` action accepts
+this explicit write-protection result when flushing read-only media, but still
+requires an exclusive volume lock and successful dismount/eject.
 
 NTFS journaling is implemented by Windows, not PicoUSB. A successful sector write
 means `fsync` succeeded on the backing image; it is not an atomic filesystem

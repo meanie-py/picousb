@@ -5,9 +5,11 @@ OS running on a Raspberry Pi. The Pico exposes a keyboard, mouse, and removable
 disk; the development host controls them over Wi-Fi. Storage can be a directory
 backed by FAT16 or an existing raw disk image.
 
-**Status:** Wi-Fi authentication, keyboard/mouse input, and directory-backed USB
-reads/writes/eject have passed on a real Pico 2 W with Windows. Custom-target OS,
-extended fault recovery, and sustained-transfer acceptance remain open in
+**Status:** Wi-Fi authentication, keyboard/mouse input, directory-backed USB,
+and raw NTFS images have passed on a real Pico 2 W with Windows. A 512 MiB
+write/read round trip matched all hashes; backend-interruption recovery and
+read-only enforcement passed. Measured throughput was about 0.22 MiB/s writing
+and 0.25 MiB/s reading. Pi boot and broader endurance/fault scenarios remain open in
 [hardware acceptance](docs/hardware-acceptance.md). Use a dedicated test directory
 and target during development.
 
