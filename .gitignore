@@ -1,0 +1,26 @@
+# Provisioning secrets and all generated firmware/config artifacts stay local.
+.env
+.env.*
+!.env.flash.example
+*.bin
+*.uf2
+*.elf
+*.hex
+*.map
+build/
+build-*/
+dist/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# Local backing directories, disk images, and recovery journals.
+virtual-drive/
+.picousb/
+*.img
+*.journal
