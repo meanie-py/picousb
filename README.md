@@ -217,6 +217,20 @@ filesystem crash recovery.
 
 ## Security and testing
 
+An experimental `--udp-reads` connection flag moves successful storage read data
+over a bounded, acknowledged UDP transport. Authentication, control, writes and
+flushes still use WebSockets. For example:
+
+```sh
+pico-devbox --url ws://DEVICE_IP:8080/ws --udp-reads serve-image disposable.img
+```
+
+The equivalent library option is `DevBox(url, token=token, udp_reads=True)`.
+It also works with directory serving. The default remains WebSocket-only, and
+updated firmware is required. UDP reads use checksums, selective retries and
+deadlines; this is a performance experiment, not a change to write durability.
+See the [wire protocol](docs/protocol.md#experimental-udp-read-data).
+
 For paced UDP/TCP comparison without changing storage transport, see
 [UDP diagnostics](docs/udp-diagnostic-2026-09-26.md). The optional echo lease
 requires the authenticated control session and expires within 60 seconds;

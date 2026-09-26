@@ -17,6 +17,7 @@ class Op(IntEnum):
     STATUS = 2
     METRICS = 3
     UDP_PROBE = 4
+    UDP_READS = 5
     KEY_DOWN = 10
     KEY_UP = 11
     KEY_PRESS = 12

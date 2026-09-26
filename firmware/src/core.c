@@ -316,6 +316,9 @@ void db_init(db_device *d, const db_config *c, db_send_fn send, db_complete_fn c
     d->sectors = DB_SECTORS;
 }
 void db_disconnect(db_device *d) {
+    d->udp_reads = false;
+    d->udp_id = 0;
+    memset(d->udp_cookie, 0, sizeof(d->udp_cookie));
     d->probe_active = false;
     memset(d->probe_cookie, 0, sizeof(d->probe_cookie));
     d->media_generation++;
@@ -347,6 +350,7 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         if (!d->authenticated || m.session != d->session || !d->pending || m.id != d->pending_id ||
             m.op != (d->pending_op | 128))
             return false;
+        if (d->udp_reads && d->pending_op == DB_READ && !m.status) return false;
         bool ok = !m.status && m.length == (d->pending_op == DB_READ ? d->pending_bytes : 0u);
         d->pending = false;
         if (!ok)
@@ -415,6 +419,18 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
             r.data = stats;
             r.length = sizeof(stats);
             return send_message(d, &r);
+        }
+    } else if (m.op == DB_UDP_READS) {
+        if (m.a != 1 || m.b || m.length != 16)
+            r.status = DB_ARGUMENT;
+        else if (d->media || d->pending)
+            r.status = DB_BUSY;
+        else {
+            d->udp_reads = true;
+            d->udp_id = 0;
+            memcpy(d->udp_cookie, m.data, 16);
+            r.a = 1;
+            r.b = 8081;
         }
     } else if (m.op == DB_ATTACH) {
         if (!m.a || m.a > 0x7fffffffu || m.b != 512 ||
@@ -504,4 +520,54 @@ bool db_udp_probe(db_device *d, const uint8_t *data, size_t n, uint32_t now) {
     d->probe_sent = true;
     d->probe_last = now;
     return true;
+}
+
+size_t db_udp_read(db_device *d, const uint8_t *p, size_t n, uint8_t *ack, uint32_t now) {
+    if (!d->authenticated || !d->media || !d->udp_reads || n < 36 || n > 1060 ||
+        memcmp(p, "PDR1", 4) || u32(p + 4) != d->session ||
+        memcmp(p + 12, d->udp_cookie, 16)) return 0;
+    uint32_t id = u32(p + 8), crc = u32(p + 32);
+    unsigned size = p[28] | (unsigned)p[29] << 8;
+    unsigned index = p[30] | (unsigned)p[31] << 8;
+    if (!size || size > DB_PAYLOAD || size % 512 || index >= (size + 1023)/1024) return 0;
+    unsigned offset = index * 1024, bytes = size - offset;
+    if (bytes > 1024) bytes = 1024;
+    if (n != 36 + bytes) return 0;
+    uint16_t full = (uint16_t)((1u << ((size + 1023)/1024)) - 1);
+    bool same = id == d->udp_id && d->udp_generation == d->media_generation;
+    /* A lost final ACK may be retried after USB has queued its next request. */
+    bool completed = same && d->udp_mask == full && d->udp_size == size && d->udp_crc == crc;
+    if (!completed) {
+        if (!d->pending || d->pending_op != DB_READ || id != d->pending_id ||
+            size != d->pending_bytes || (int32_t)(now - d->deadline) >= 0) return 0;
+        if (!same) {
+            d->udp_id = id;
+            d->udp_generation = d->media_generation;
+            d->udp_size = (uint16_t)size;
+            d->udp_crc = crc;
+            d->udp_mask = 0;
+        }
+        if (d->udp_size != size || d->udp_crc != crc) return 0;
+        uint16_t bit = (uint16_t)(1u << index);
+        if (!(d->udp_mask & bit)) {
+            memcpy(d->udp_data + offset, p + 36, bytes);
+            d->udp_mask |= bit;
+        }
+        if (d->udp_mask == full) {
+            if (db_crc32(d->udp_data, size) != crc) {
+                d->pending = false;
+                d->media = false;
+                d->complete(d->ctx, false, NULL, 0);
+                return 0;
+            } else {
+                d->pending = false;
+                d->complete(d->ctx, true, d->udp_data, size);
+            }
+        }
+    }
+    memcpy(ack, p, 36);
+    memcpy(ack, "PDA1", 4);
+    ack[30] = (uint8_t)d->udp_mask;
+    ack[31] = (uint8_t)(d->udp_mask >> 8);
+    return 36;
 }

@@ -26,7 +26,7 @@ async def test_cli_uses_library(args: dict[str, object], monkeypatch: pytest.Mon
     box.__aenter__.return_value = box
     box.status.return_value = {"network": "connected"}
     monkeypatch.setenv("PICO_DEVICE_TOKEN", "synthetic-test-token")
-    monkeypatch.setattr(cli, "DevBox", lambda *a: box)
+    monkeypatch.setattr(cli, "DevBox", lambda *a, **kw: box)
     await cli.run(argparse.Namespace(url="ws://synthetic", **args))
     box.__aenter__.assert_awaited_once()
     box.__aexit__.assert_awaited_once()

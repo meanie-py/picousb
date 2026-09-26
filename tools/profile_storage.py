@@ -114,7 +114,9 @@ async def device(args: argparse.Namespace) -> None:
         service.append(previous_end - start)
 
     with patch.object(ImageDisk, "read", read), patch.object(Storage, "handle", handle):
-        async with DevBox(args.url, token=token) as box:
+        async with DevBox(
+            args.url, token=token, udp_reads=getattr(args, "udp_reads", False)
+        ) as box:
             rtt = []
             for _ in range(50):
                 start = time.perf_counter()
@@ -161,6 +163,7 @@ async def device(args: argparse.Namespace) -> None:
                         "storage",
                         read_bytes=box.storage.read_bytes,
                         errors=box.storage.errors,
+                        udp_retries=box._udp.retries if box._udp else 0,
                         request_sizes=dict(sizes),
                         disk_read=timing(reads),
                         host_service=timing(service),
@@ -182,6 +185,7 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=Path(".env.flash"))
     parser.add_argument("--image", type=Path)
     parser.add_argument("--firmware-metrics", action="store_true")
+    parser.add_argument("--udp-reads", action="store_true")
     args = parser.parse_args()
     if args.mode == "device" and args.image is None:
         parser.error("device mode requires --image")

@@ -22,7 +22,17 @@ static void probe_received(void *arg, struct udp_pcb *pcb, struct pbuf *packet,
     if (peer && ip_addr_cmp(address, &peer->remote_ip) && packet->tot_len <= sizeof(bytes)) {
         size_t n = packet->tot_len;
         pbuf_copy_partial(packet, bytes, (u16_t)n, 0);
-        if (db_udp_probe(&device, bytes, n, to_ms_since_boot(get_absolute_time()))) {
+        uint8_t ack[36];
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        size_t ack_size = db_udp_read(&device, bytes, n, ack, now);
+        if (ack_size) {
+            struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, (u16_t)ack_size, PBUF_RAM);
+            if (reply) {
+                pbuf_take(reply, ack, (u16_t)ack_size);
+                udp_sendto(pcb, reply, address, port);
+                pbuf_free(reply);
+            }
+        } else if (n >= 4 && !memcmp(bytes, "PDU1", 4) && db_udp_probe(&device, bytes, n, now)) {
             /* Echo the received pbuf synchronously; no retained buffers/queue. */
             if (udp_sendto(pcb, packet, address, port) == ERR_OK) device.probe_stats[1]++;
             else device.probe_stats[4]++;

@@ -1,6 +1,7 @@
 """Async host client. A dedicated receiver services storage during control calls."""
 
 import asyncio
+import secrets
 from contextlib import suppress
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from websockets.exceptions import ConnectionClosed
 from .image import ImageDisk
 from .protocol import HEADER, MAX_PAYLOAD, RESPONSE, SECTORS, DevBoxError, Message, Op
 from .storage import DirectoryDisk
+from .udp_reads import UDPReads
 
 KEYS = {
     "ENTER": 40,
@@ -195,16 +197,25 @@ class Storage:
                 status = 6
                 self.errors += 1
             self.requests += 1
-        await self.box._send(Message(m.op | RESPONSE, m.id, m.session, payload=data, status=status))
+        if m.op == Op.READ and not status and self.box._udp is not None:
+            await self.box._udp.send(m.id, data)
+        else:
+            await self.box._send(
+                Message(m.op | RESPONSE, m.id, m.session, payload=data, status=status)
+            )
         if m.op == Op.EJECT and not status:
             self.ejected.set()
 
 
 class DevBox:
-    def __init__(self, uri: str, token: str = "", *, timeout: float = 8.0) -> None:
+    def __init__(
+        self, uri: str, token: str = "", *, timeout: float = 8.0, udp_reads: bool = False
+    ) -> None:
         self.uri, self._token, self.timeout = uri, token, timeout
         self.ws: ClientConnection | None = None
         self.session = 0
+        self.udp_reads = udp_reads
+        self._udp: UDPReads | None = None
         self._next_id = 0
         self._pending: dict[int, tuple[int, asyncio.Future[Message]]] = {}
         self._receiver: asyncio.Task[None] | None = None
@@ -241,6 +252,16 @@ class DevBox:
             if not reply.session:
                 raise DevBoxError(1, "invalid session")
             self.session = reply.session
+            if self.udp_reads:
+                cookie = secrets.token_bytes(16)
+                reply = await self.request(Op.UDP_READS, a=1, payload=cookie)
+                if reply.a != 1 or reply.b != 8081 or reply.payload:
+                    raise DevBoxError(1, "invalid UDP negotiation")
+                udp = UDPReads(self.session, cookie)
+                self._udp = udp
+                await asyncio.get_running_loop().create_datagram_endpoint(
+                    lambda: udp, remote_addr=(self.ws.remote_address[0], reply.b)
+                )
         except BaseException:
             await self.close()
             raise
@@ -326,6 +347,8 @@ class DevBox:
         except Exception:
             pass
         finally:
+            if self._udp:
+                self._udp.close()
             for _, future in self._pending.values():
                 if not future.done():
                     future.set_exception(
@@ -348,6 +371,8 @@ class DevBox:
                 self._queue.task_done()
 
     async def close(self) -> None:
+        if self._udp:
+            self._udp.close()
         if self.ws:
             await self.ws.close()
         if self._receiver:
@@ -362,3 +387,4 @@ class DevBox:
         await self.storage.close()
         self.ws = None
         self.session = 0
+        self._udp = None

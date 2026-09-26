@@ -16,6 +16,7 @@ enum {
     DB_STATUS = 2,
     DB_METRICS = 3,
     DB_UDP_PROBE = 4,
+    DB_UDP_READS = 5,
     DB_KEY_DOWN = 10,
     DB_KEY_UP,
     DB_KEY_PRESS,
@@ -70,6 +71,10 @@ typedef struct {
     uint32_t clock_ms, probe_until, probe_last, probe_stats[5];
     uint8_t probe_cookie[16];
     bool probe_active, probe_sent;
+    bool udp_reads;
+    uint8_t udp_cookie[16], udp_data[DB_PAYLOAD];
+    uint32_t udp_id, udp_generation, udp_crc;
+    uint16_t udp_size, udp_mask;
 } db_device;
 uint32_t db_crc32(const uint8_t *, size_t);
 bool db_config_read(db_config *, const uint8_t *, size_t);
@@ -88,4 +93,6 @@ bool db_storage_begin(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t)
 bool db_storage_begin_blocks(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t, uint32_t);
 void db_tick(db_device *, uint32_t);
 bool db_udp_probe(db_device *, const uint8_t *, size_t, uint32_t);
+/* Returns a 36-byte cumulative ACK, or zero. Caller checks source IP. */
+size_t db_udp_read(db_device *, const uint8_t *, size_t, uint8_t *, uint32_t);
 #endif

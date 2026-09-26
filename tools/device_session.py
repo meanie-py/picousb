@@ -16,7 +16,7 @@ async def run(args: argparse.Namespace) -> None:
     values = parse_env(args.config.read_text(encoding="utf-8-sig"))
     token = values.pop("DEVICE_TOKEN", "")
     values.clear()
-    async with DevBox(args.url, token=token) as box:
+    async with DevBox(args.url, token=token, udp_reads=getattr(args, "udp_reads", False)) as box:
         await box.status()
         print("Authenticated device status received.", flush=True)
         image = getattr(args, "image", None)
@@ -32,6 +32,11 @@ async def run(args: argparse.Namespace) -> None:
                 await box.status()
                 ticks += 1
                 if ticks % 10 == 0:
+                    if box._udp:
+                        print(
+                            f"UDP: batches={box._udp.batches} packets={box._udp.packets} retries={box._udp.retries}",
+                            flush=True,
+                        )
                     print(
                         f"Storage: read={box.storage.read_bytes} written={box.storage.written_bytes} requests={box.storage.requests} errors={box.storage.errors}",
                         flush=True,
@@ -47,6 +52,7 @@ def main() -> int:
     media.add_argument("--serve", type=Path)
     media.add_argument("--image", type=Path)
     parser.add_argument("--writable", action="store_true")
+    parser.add_argument("--udp-reads", action="store_true")
     args = parser.parse_args()
     logging.disable(logging.CRITICAL)
     try:

@@ -172,7 +172,7 @@ async def test_image_cli(writable: bool, monkeypatch: pytest.MonkeyPatch) -> Non
     box.storage.ejected.set()
     box.ws.close_code = None
     monkeypatch.setenv("PICO_DEVICE_TOKEN", "synthetic")
-    monkeypatch.setattr(cli, "DevBox", lambda *a: box)
+    monkeypatch.setattr(cli, "DevBox", lambda *a, **kw: box)
     await cli.run(
         argparse.Namespace(
             command="serve-image", url="ws://fake", image="test.img", writable=writable

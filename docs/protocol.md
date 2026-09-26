@@ -253,3 +253,45 @@ transaction. Concurrent local adversarial mutation of the backing root is outsid
 the exclusive-ownership contract; use a dedicated directory with restricted access.
 
 UART streaming is deferred. GP0/GP1 currently carry diagnostic UART at 115200 baud.
+
+## Experimental UDP read data
+
+Opt in with `DevBox(..., udp_reads=True)` or the CLI global `--udp-reads` flag.
+The default remains WebSocket-only. After authentication, before attaching media,
+opcode 5 negotiates version `a=1`, `b=0`, and a fresh random 16-byte cookie.
+The reply has `a=1`, `b=8081`, no payload. Negotiation while media is attached or
+an operation is pending returns BUSY. Unsupported firmware fails explicitly.
+Reconnect requires a new cookie and explicit media attachment.
+
+READ requests still arrive over WebSocket. Successful READ data travels to UDP
+port 8081 in chunks of 1024 bytes (a final 512-byte chunk is allowed). Error
+responses, WRITE data and durable acknowledgments, FLUSH, EJECT, HID and control
+remain on WebSocket. A successful WebSocket READ response is rejected in UDP mode.
+
+UDP header is 36 bytes, little endian, Python `<4sII16sHHI`:
+
+| Offset | Field |
+| --- | --- |
+| 0 | `PDR1` data / `PDA1` acknowledgment |
+| 4 | authenticated session, uint32 |
+| 8 | storage request ID, uint32 |
+| 12 | 16-byte negotiated cookie |
+| 28 | total read bytes, uint16, 512..16384, multiple of 512 |
+| 30 | data: zero-based chunk index; ACK: cumulative 16-bit received bitmap |
+| 32 | CRC32 of the entire read payload, uint32 |
+
+Data follows the header; ACKs have no payload. Maximum datagram size is 1060.
+The adapter admits only the authenticated WebSocket peer's IP; the core checks
+session, cookie, request, size, bounds, media generation and deadline. The host
+uses a connected UDP socket and checks every ACK field. This is a session binding,
+not encryption or protection against a hostile peer observing this trusted LAN.
+
+The host keeps at most four unacknowledged chunks in flight, retransmits missing
+chunks with bounded backoff, and allows three seconds per read reply. The Pico
+retains one 16 KiB reassembly buffer. Duplicate and reordered chunks are safe;
+the final bitmap remains available for retries of a lost final ACK. USB completion
+occurs once, only after full reassembly and CRC verification. CRC failure takes
+media offline. Incomplete reads time out under the existing five-second firmware
+deadline. Host retry exhaustion closes the session; there is no silent transport
+fallback. Disconnect revokes the cookie and media; stale packets cannot complete
+a later request. UDP does not change persistence guarantees or add write caching.

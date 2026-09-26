@@ -11,7 +11,7 @@ async def run(args: argparse.Namespace) -> None:
     token = os.environ.get("PICO_DEVICE_TOKEN")
     if token is None:
         token = getpass.getpass("Device token (blank if disabled): ")
-    async with DevBox(args.url, token) as box:
+    async with DevBox(args.url, token, udp_reads=getattr(args, "udp_reads", False)) as box:
         if args.command in ("status", "connect"):
             print(json.dumps(await box.status()))
         elif args.command == "type":
@@ -44,6 +44,7 @@ async def run(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(prog="pico-devbox")
     p.add_argument("--url", default=os.environ.get("PICO_URL", "ws://picousb.local:8080/ws"))
+    p.add_argument("--udp-reads", action="store_true", help="Experimental reliable UDP read data")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     sub.add_parser("connect")

@@ -17,8 +17,9 @@ async def test_opaque_authentication(tmp_path: Path, monkeypatch: pytest.MonkeyP
     box = AsyncMock()
     box.__aenter__.return_value = box
 
-    def factory(url, token):
+    def factory(url, token, *, udp_reads=False):
         assert token == "synthetic-token-1234"
+        assert not udp_reads
         return box
 
     monkeypatch.setattr(device_session, "DevBox", factory)
