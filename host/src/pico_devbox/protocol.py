@@ -16,6 +16,7 @@ class Op(IntEnum):
     AUTH = 1
     STATUS = 2
     METRICS = 3
+    UDP_PROBE = 4
     KEY_DOWN = 10
     KEY_UP = 11
     KEY_PRESS = 12

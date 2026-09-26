@@ -15,6 +15,7 @@ enum {
     DB_AUTH_OP = 1,
     DB_STATUS = 2,
     DB_METRICS = 3,
+    DB_UDP_PROBE = 4,
     DB_KEY_DOWN = 10,
     DB_KEY_UP,
     DB_KEY_PRESS,
@@ -66,6 +67,9 @@ typedef struct {
     uint32_t pending_bytes;
     uint32_t media_generation;
     db_metric metrics[DB_METRIC_COUNT];
+    uint32_t clock_ms, probe_until, probe_last, probe_stats[5];
+    uint8_t probe_cookie[16];
+    bool probe_active, probe_sent;
 } db_device;
 uint32_t db_crc32(const uint8_t *, size_t);
 bool db_config_read(db_config *, const uint8_t *, size_t);
@@ -83,4 +87,5 @@ bool db_receive(db_device *, const uint8_t *, size_t);
 bool db_storage_begin(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t);
 bool db_storage_begin_blocks(db_device *, uint8_t, uint32_t, const uint8_t *, uint32_t, uint32_t);
 void db_tick(db_device *, uint32_t);
+bool db_udp_probe(db_device *, const uint8_t *, size_t, uint32_t);
 #endif

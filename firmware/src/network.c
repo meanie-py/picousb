@@ -1,5 +1,6 @@
 #include "devbox.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
 #include "mbedtls/base64.h"
 #include "mbedtls/sha1.h"
 #include "pico/cyw43_arch.h"
@@ -13,6 +14,22 @@ static uint8_t rx[DB_MAX + 8 + TCP_MSS];
 static size_t used;
 static bool upgraded, closing;
 static uint32_t opened;
+static void probe_received(void *arg, struct udp_pcb *pcb, struct pbuf *packet,
+                           const ip_addr_t *address, u16_t port) {
+    (void)arg;
+    static uint8_t bytes[1200];
+    if (!packet) return;
+    if (peer && ip_addr_cmp(address, &peer->remote_ip) && packet->tot_len <= sizeof(bytes)) {
+        size_t n = packet->tot_len;
+        pbuf_copy_partial(packet, bytes, (u16_t)n, 0);
+        if (db_udp_probe(&device, bytes, n, to_ms_since_boot(get_absolute_time()))) {
+            /* Echo the received pbuf synchronously; no retained buffers/queue. */
+            if (udp_sendto(pcb, packet, address, port) == ERR_OK) device.probe_stats[1]++;
+            else device.probe_stats[4]++;
+        }
+    }
+    pbuf_free(packet);
+}
 static bool send_raw(const void *p, size_t n) {
     if (!peer || n > tcp_sndbuf(peer))
         return false;
@@ -200,6 +217,13 @@ static err_t accepted(void *arg, struct tcp_pcb *p, err_t err) {
     return ERR_OK;
 }
 bool network_start(void) {
+    struct udp_pcb *probe = udp_new_ip_type(IPADDR_TYPE_V4);
+    if (!probe) return false;
+    if (udp_bind(probe, IP_ADDR_ANY, 8081) != ERR_OK) {
+        udp_remove(probe);
+        return false;
+    }
+    udp_recv(probe, probe_received, NULL);
     struct tcp_pcb *p = tcp_new_ip_type(IPADDR_TYPE_V4);
     if (!p)
         return false;

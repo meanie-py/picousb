@@ -57,6 +57,7 @@ not roll back completed writes or input already delivered to the USB host.
 | 1 | authenticate | session=0, A=B=0, payload=UTF-8 DEVICE_TOKEN | new session ID |
 | 2 | status | A=B=0, empty payload | A=media present, B=queued HID reports |
 | 3 | metrics | A=B=0, empty payload | A=layout version 1, B=6 records, 288-byte payload |
+| 4 | UDP diagnostic | arm: A=1..60000 ms, B=0, random 16-byte cookie; query: A=B=0, empty payload | A=layout version 1, B=8081, five u32 counters |
 
 When no DEVICE_TOKEN was provisioned, authenticate with an empty payload.
 Authenticated operations require the returned session. Neither token nor Wi-Fi
@@ -91,7 +92,28 @@ samples must span less than its approximately 71-minute period. Metrics calls
 are ordinary authenticated control traffic: query before/after a measurement,
 not repeatedly during it. `tools/profile_storage.py --firmware-metrics` does so.
 
-## HID
+## Optional UDP echo diagnostic
+
+Operation 4 requires the authenticated WebSocket session. Arming resets counters;
+querying does not renew the lease. The cookie is supplied by the host and never
+returned through the control API. Counters are valid datagrams received, echoes
+submitted to lwIP, invalid datagrams, rate-limited datagrams, and send failures,
+in that order (little-endian u32). It provides no file or USB operations.
+
+UDP port 8081 accepts 28..1200-byte datagrams only from the active TCP peer's IP.
+Header `<4sI16sI` is magic `PDU1`, session ID, cookie, and nonzero sequence number;
+remaining bytes are synthetic test data. A valid datagram is echoed unchanged.
+No replies are sent without authentication, with a mismatched cookie/session,
+after lease expiry, or after disconnect. Cookie knowledge is not protection
+against a hostile network observer; this remains a trusted-network diagnostic.
+
+Replies are limited to one every two milliseconds, with no queued catch-up and
+no amplification. Counters distinguish rate drops and send failures from observed
+end-to-end loss. Echo submission is not proof of delivery. UDP callback memory is
+bounded; storage continues to use WebSockets. Tests should avoid IP fragmentation
+(the supplied probe uses 1200-byte packets) and must report loss as well as RTT.
+
+## HID commands
 
 | Op | Operation | A | B | Payload |
 | --- | --- | --- | --- | --- |

@@ -217,6 +217,11 @@ filesystem crash recovery.
 
 ## Security and testing
 
+For paced UDP/TCP comparison without changing storage transport, see
+[UDP diagnostics](docs/udp-diagnostic-2026-09-26.md). The optional echo lease
+requires the authenticated control session and expires within 60 seconds;
+it is not a UDP disk server.
+
 The token gates operations and is never returned. `ws://` is plaintext beyond
 Wi-Fi link encryption: use a trusted network, not internet exposure. Directory
 traversal, unsafe FAT names, symlinks, and Windows junctions are rejected. Use a

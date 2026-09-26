@@ -316,6 +316,8 @@ void db_init(db_device *d, const db_config *c, db_send_fn send, db_complete_fn c
     d->sectors = DB_SECTORS;
 }
 void db_disconnect(db_device *d) {
+    d->probe_active = false;
+    memset(d->probe_cookie, 0, sizeof(d->probe_cookie));
     d->media_generation++;
     d->authenticated = false;
     d->media = false;
@@ -394,6 +396,26 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
             r.data = payload;
             return send_message(d, &r);
         }
+    } else if (m.op == DB_UDP_PROBE) {
+        if (m.b || (m.length != 0 && m.length != 16) ||
+            (!m.length && m.a) || (m.length && (!m.a || m.a > 60000))) {
+            r.status = DB_ARGUMENT;
+        } else {
+            if (m.length) {
+                memcpy(d->probe_cookie, m.data, 16);
+                d->probe_until = d->clock_ms + m.a;
+                d->probe_active = true;
+                d->probe_sent = false;
+                memset(d->probe_stats, 0, sizeof(d->probe_stats));
+            }
+            uint8_t stats[20];
+            for (unsigned i = 0; i < 5; i++) put32(stats + 4*i, d->probe_stats[i]);
+            r.a = 1;
+            r.b = 8081;
+            r.data = stats;
+            r.length = sizeof(stats);
+            return send_message(d, &r);
+        }
     } else if (m.op == DB_ATTACH) {
         if (!m.a || m.a > 0x7fffffffu || m.b != 512 ||
             (m.length && (m.length != 1 || m.data[0] > 1)))
@@ -458,9 +480,28 @@ bool db_storage_begin_blocks(db_device *d, uint8_t op, uint32_t lba, const uint8
     return true;
 }
 void db_tick(db_device *d, uint32_t now) {
+    d->clock_ms = now;
     if (d->pending && (int32_t)(now - d->deadline) >= 0) {
         d->pending = false;
         d->media = false;
         d->complete(d->ctx, false, NULL, 0);
     }
+}
+
+bool db_udp_probe(db_device *d, const uint8_t *data, size_t n, uint32_t now) {
+    if (!d->authenticated || !d->probe_active || (int32_t)(now - d->probe_until) >= 0)
+        return false;
+    if (n < 28 || n > 1200 || memcmp(data, "PDU1", 4) || u32(data + 4) != d->session ||
+        memcmp(data + 8, d->probe_cookie, 16) || !u32(data + 24)) {
+        d->probe_stats[2]++;
+        return false;
+    }
+    d->probe_stats[0]++;
+    if (d->probe_sent && (uint32_t)(now - d->probe_last) < 2) {
+        d->probe_stats[3]++;
+        return false;
+    }
+    d->probe_sent = true;
+    d->probe_last = now;
+    return true;
 }

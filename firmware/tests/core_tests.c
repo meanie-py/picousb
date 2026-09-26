@@ -279,7 +279,40 @@ static void metrics_test(void) {
     db_disconnect(&d);
     assert(d.metrics[0].total == total); /* counters survive sessions */
 }
+static void udp_probe_test(void) {
+    db_device d;
+    db_config c = {0};
+    db_init(&d, &c, send, complete, NULL);
+    db_connect(&d);
+    uint8_t buf[DB_MAX], cookie[16] = {0x55}, packet[1201] = {'P','D','U','1'};
+    db_message m = {.op = DB_UDP_PROBE, .id = 1, .session = d.session,
+                    .a = 60000, .length = 16, .data = cookie}, r;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_AUTH && !d.probe_active);
+    d.authenticated = true;
+    db_tick(&d, UINT32_MAX - 9);
+    m.id++;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && !r.status && r.a == 1 && r.b == 8081 && r.length == 20);
+    packet[4] = (uint8_t)d.session;
+    memcpy(packet + 8, cookie, 16); packet[24] = 1;
+    assert(!db_udp_probe(&d, packet, 27, 0));
+    assert(!db_udp_probe(&d, packet, 1201, 0));
+    packet[8] ^= 1; assert(!db_udp_probe(&d, packet, 1200, 0)); packet[8] ^= 1;
+    packet[4]++; assert(!db_udp_probe(&d, packet, 1200, 0)); packet[4]--;
+    assert(db_udp_probe(&d, packet, 1200, 0));
+    assert(!db_udp_probe(&d, packet, 1200, 1));
+    assert(db_udp_probe(&d, packet, 28, 2));
+    assert(d.probe_stats[0] == 3 && d.probe_stats[3] == 1);
+    assert(!db_udp_probe(&d, packet, 1200, 59990));
+    m.id++; m.a = 60001;
+    assert(db_receive(&d, buf, db_encode(buf, &m)));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT);
+    db_disconnect(&d);
+    assert(!db_udp_probe(&d, packet, 1200, 4) && !d.probe_active && !d.probe_cookie[0]);
+}
 int main(void) {
+    udp_probe_test();
     metrics_test();
     config_test();
     hid_test();
