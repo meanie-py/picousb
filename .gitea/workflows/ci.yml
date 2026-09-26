@@ -3,6 +3,9 @@ on: [push, pull_request, workflow_dispatch]
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Sunspot's legacy default image is Debian 11 with Python 3.9.
+    # Use an explicit supported runtime rather than inheriting that image.
+    container: node:22-bookworm
     steps:
       - uses: actions/checkout@v4
       - name: System dependencies
