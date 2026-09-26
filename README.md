@@ -4,9 +4,11 @@ Pico 2 W firmware and an async Python host client for exercising USB on a custom
 OS running on a Raspberry Pi. The Pico exposes a keyboard, mouse, and FAT16
 removable drive; the development host controls them over Wi-Fi.
 
-**Status:** implementation and software tests available. Physical verification is
-tracked in [hardware acceptance](docs/hardware-acceptance.md). Use a dedicated
-test directory and target during development.
+**Status:** Wi-Fi authentication, keyboard/mouse input, and directory-backed USB
+reads/writes/eject have passed on a real Pico 2 W with Windows. Custom-target OS,
+extended fault recovery, and sustained-transfer acceptance remain open in
+[hardware acceptance](docs/hardware-acceptance.md). Use a dedicated test directory
+and target during development.
 
 ```text
 Development host / AI agent
@@ -196,8 +198,9 @@ Checks include ASan/UBSan native firmware tests, config/CRC corruption, HID stat
 session/deadline/disconnect handling, Python lifecycle and CLI, path containment,
 FAT recovery, independent filesystem tools, and WebSocket integration against
 both Python fakes and the actual native firmware core. Ruff and mypy run in the
-same workflow. Gitea Actions is configured in `.gitea/workflows/ci.yml` and needs
-an enabled compatible Linux runner. CI never provisions or uploads private images.
+same workflow, including the actual lwIP DHCP/mDNS timer regression. Gitea Actions
+is configured in `.gitea/workflows/ci.yml` and enabled for the repository on
+Sunspot's Linux runner. CI never provisions or uploads private images.
 
 See [protocol](docs/protocol.md), [architecture](docs/architecture.md), and
 [hardware acceptance](docs/hardware-acceptance.md) for exact contracts and checks.
