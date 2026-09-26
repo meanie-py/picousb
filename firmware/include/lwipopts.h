@@ -20,7 +20,9 @@
 #define MDNS_MAX_SERVICES 1
 /* The lwIP default covers core timers only; mDNS requires additional slots. */
 #define MEMP_NUM_SYS_TIMEOUT (LWIP_NUM_SYS_TIMEOUT_INTERNAL + 16)
+#ifndef MEM_ALIGNMENT
 #define MEM_ALIGNMENT 4
+#endif
 #define MEM_SIZE 32768
 #define MEMP_NUM_TCP_PCB 4
 #define MEMP_NUM_TCP_SEG 32

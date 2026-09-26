@@ -2,6 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python_bin="${PYTHON:-python3}"
+export UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
 bash tools/bootstrap.sh
 lwip="${PICOUSB_DEPS_ROOT:-$PWD/build/deps}/pico-sdk/lib/lwip"
 cmake -S firmware -B build/native -G Ninja -DDEVBOX_NATIVE=ON -DCMAKE_BUILD_TYPE=Debug \

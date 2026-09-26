@@ -23,6 +23,7 @@ if(DEVBOX_NATIVE)
     add_executable(network_tests tests/network_tests.c ${LWIP_SOURCES}
       "${DEVBOX_LWIP_PATH}/src/netif/ethernet.c")
     target_include_directories(network_tests PRIVATE tests/mocks include "${DEVBOX_LWIP_PATH}/src/include")
+    target_compile_definitions(network_tests PRIVATE MEM_ALIGNMENT=${CMAKE_SIZEOF_VOID_P})
     add_test(NAME network_timers COMMAND network_tests)
   endif()
   return()

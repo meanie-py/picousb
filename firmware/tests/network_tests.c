@@ -38,13 +38,14 @@ static err_t initialize(struct netif *netif) {
     return ERR_OK;
 }
 int main(void) {
-    struct netif netif;
+    struct netif netif = {0};
     ip4_addr_t address, mask, gateway;
     IP4_ADDR(&address, 192, 0, 2, 2);
     IP4_ADDR(&mask, 255, 255, 255, 0);
     IP4_ADDR(&gateway, 192, 0, 2, 1);
     lwip_init();
     assert(netif_add(&netif, &address, &mask, &gateway, NULL, initialize, ethernet_input));
+    netif_set_hostname(&netif, "synthetic-picousb");
     netif_set_default(&netif);
     mdns_resp_init();
     assert(mdns_resp_add_netif(&netif, "synthetic-picousb") == ERR_OK);
