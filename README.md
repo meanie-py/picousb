@@ -230,6 +230,9 @@ It also works with directory serving. The default remains WebSocket-only, and
 updated firmware is required. UDP reads use checksums, selective retries and
 deadlines; this is a performance experiment, not a change to write durability.
 See the [wire protocol](docs/protocol.md#experimental-udp-read-data).
+The first [physical comparison](docs/udp-storage-2026-09-26.md) verified correct
+reads and persisted writes, but UDP reads were slower (0.259 versus 0.356 MiB/s).
+Keep this flag for experiments; WebSockets remain the default.
 
 For paced UDP/TCP comparison without changing storage transport, see
 [UDP diagnostics](docs/udp-diagnostic-2026-09-26.md). The optional echo lease
