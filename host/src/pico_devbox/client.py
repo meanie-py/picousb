@@ -437,6 +437,10 @@ class DevBox:
             "usb": asdict(await self.usb_status()),
         }
 
+    async def reboot_to_bootsel(self) -> None:
+        """Reboot into the ROM USB bootloader for a firmware update; the session ends."""
+        await self.request(Op.BOOTSEL)
+
     async def usb_status(self) -> USBStatus:
         return USBStatus.decode((await self.request(Op.USB_STATUS)).payload)
 

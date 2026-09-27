@@ -24,7 +24,8 @@
 #define MEM_ALIGNMENT 4
 #endif
 #define MEM_SIZE 65536
-#define MEMP_NUM_TCP_PCB 4
+#define LWIP_TCP_KEEPALIVE 1
+#define MEMP_NUM_TCP_PCB 6 /* control + serial console (active + authenticating) */
 #define MEMP_NUM_TCP_SEG 32
 #define TCP_MSS 1460
 #define TCP_WND (16 * TCP_MSS)

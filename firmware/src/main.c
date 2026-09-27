@@ -1,5 +1,6 @@
 #include "devbox.h"
 #include "lwip/apps/mdns.h"
+#include "pico/bootrom.h"
 #include "pico/cyw43_arch.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
@@ -23,12 +24,16 @@ void network_tick(uint32_t, bool);
 void usb_complete(void *, bool, const uint8_t *, size_t);
 void usb_reports(void);
 void usb_storage_tick(void);
+void serial_init(void);
+bool serial_start(void);
+void serial_tick(uint32_t, bool);
 int main(void) {
 #ifdef PICOUSB_DIAGNOSTICS
     if (watchdog_caused_reboot() && watchdog_hw->scratch[0] == 0x50444247)
         diagnostic_phase = watchdog_hw->scratch[1];
 #endif
     stdio_init_all();
+    serial_init();
     db_config config;
     bool valid =
         db_config_read(&config, (const uint8_t *)(XIP_BASE + PICO_FLASH_SIZE_BYTES - 4096), 4096);
@@ -70,7 +75,7 @@ int main(void) {
     netif_set_hostname(&cyw43_state.netif[0], "picousb");
     mdns_resp_init();
     mdns_resp_add_netif(&cyw43_state.netif[0], "picousb");
-    if (!network_start()) {
+    if (!network_start() || !serial_start()) {
         printf("{\"event\":\"server_failed\"}\n");
         while (true) {
             tud_task();
@@ -123,12 +128,21 @@ int main(void) {
         }
         phase(7);
         network_tick(now, online);
+        serial_tick(now, true);
         phase(8);
         db_tick(&device, now);
         usb_storage_tick();
         phase(9);
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, online);
         phase(10);
+        if (device.bootsel) {
+            /* Let the reply leave before the radio goes away with the reset. */
+            for (int i = 0; i < 200; i++) {
+                cyw43_arch_poll();
+                sleep_ms(1);
+            }
+            reset_usb_boot(0, 0);
+        }
         sleep_ms(1);
 #ifdef PICOUSB_DIAGNOSTICS
         watchdog_hw->scratch[2]++;

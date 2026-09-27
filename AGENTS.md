@@ -44,18 +44,14 @@ Development host <-- existing HDMI capture card ------------ target Raspberry Pi
   need target-specific acceptance. A PC/FreeDOS image is not a Pi boot test.
 - The host already captures HDMI. Do not add video transport to the Pico.
 
-## Planned GPIO serial console
+## GPIO serial console
 
-Once the jumper wires arrive, connect the Pico's GPIO UART to the target Pi's
-GPIO UART for a bidirectional serial console over the host connection. Reserve
-Pico GP0 (TX) / GP1 (RX), preferably configurable. This should expose early-boot
-and crash output and allow console input independently of the target USB driver.
-
-This bridge is planned, not physically verified or implemented as a WebSocket
-stream. The firmware currently uses UART for diagnostic logs; separate those
-logs from target-console traffic before implementing the bridge. Confirm target
-pin assignments and baud rate when wiring; use 3.3 V UART levels and a common
-ground. Do not imply GPIO UART supplies target power or reset control.
+The Pico's UART0 (GP0 TX -> target RXD, GP1 RX <- target TXD, common ground,
+3.3 V) is bridged to TCP port 8082 (`docs/protocol.md`, "Serial console";
+`pico-devbox serial`). Firmware diagnostics moved to UART1 on GP4/GP5 so they
+never reach the target. The console releases its pins while the target's USB
+power is absent, since the Pico can stay powered from VSYS. Physical acceptance
+against the Pi 4B is recorded in `docs/hardware-acceptance.md`, not assumed.
 
 ## Current architecture and ownership
 

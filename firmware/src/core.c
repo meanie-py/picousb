@@ -414,6 +414,11 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         r.b = d->hid.count;
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
+    } else if (m.op == DB_BOOTSEL) {
+        if (m.length || m.a || m.b)
+            r.status = DB_ARGUMENT;
+        else
+            d->bootsel = true;
     } else if (m.op == DB_USB_STATUS) {
         if (m.a || m.b || m.length) r.status = DB_ARGUMENT;
         else {

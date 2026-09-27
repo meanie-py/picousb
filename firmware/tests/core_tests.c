@@ -135,6 +135,15 @@ static void protocol_test(void) {
     assert(!d.pending && completions == 2);
     d.media = true;
     assert(db_storage_begin(&d, DB_READ, 0, NULL, 0));
+    m = (db_message){.op = DB_BOOTSEL, .id = 30, .session = d.session, .a = 1};
+    n = db_encode(b, &m);
+    assert(db_receive(&d, b, n));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_ARGUMENT && !d.bootsel);
+    m = (db_message){.op = DB_BOOTSEL, .id = 31, .session = d.session};
+    n = db_encode(b, &m);
+    assert(db_receive(&d, b, n));
+    assert(db_decode(&r, sent, sent_n) && r.op == (DB_BOOTSEL | 128) && r.status == DB_OK && d.bootsel);
+    d.bootsel = false;
     db_disconnect(&d);
     assert(completions == 3 && !d.media && !d.authenticated);
     m = (db_message){.op = DB_STATUS, .id = 2, .length = 1024, .data = b};
@@ -143,6 +152,17 @@ static void protocol_test(void) {
     assert(!db_decode(&r, sent, n - 1));
     sent[0] = 'X';
     assert(!db_decode(&r, sent, n));
+}
+static void bootsel_needs_auth_test(void) {
+    db_config c = {.token = "synthetic-test-token"};
+    db_device d;
+    db_init(&d, &c, send, complete, NULL);
+    db_connect(&d);
+    uint8_t b[DB_MAX];
+    db_message m = {.op = DB_BOOTSEL, .id = 1}, r;
+    size_t n = db_encode(b, &m);
+    assert(db_receive(&d, b, n));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_AUTH && !d.bootsel);
 }
 static void websocket_test(void) {
     uint8_t p[] = {0x82, 0x83, 1, 2, 3, 4, 'a' ^ 1, 'b' ^ 2, 'c' ^ 3}, out[DB_MAX], op;
@@ -317,6 +337,7 @@ int main(void) {
     config_test();
     hid_test();
     protocol_test();
+    bootsel_needs_auth_test();
     websocket_test();
     storage_success_test();
     image_test();

@@ -36,7 +36,8 @@ enum {
     DB_READ = 40,
     DB_WRITE,
     DB_FLUSH,
-    DB_EJECT
+    DB_EJECT,
+    DB_BOOTSEL = 50
 };
 typedef struct {
     char ssid[33], password[64], token[129];
@@ -79,6 +80,7 @@ typedef struct {
     db_complete_fn complete;
     void *ctx;
     bool authenticated, media, changed, pending, read_only;
+    bool bootsel; /* reboot into the ROM USB bootloader once the reply is sent */
     uint32_t sectors;
     uint8_t pending_op;
     uint32_t session, next_storage, pending_id, deadline;

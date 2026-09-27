@@ -2,10 +2,12 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 
 from .auth import cli_token
 from .client import DevBox
 from .protocol import DevBoxError
+from .serial import DEFAULT_PORT, SerialConsole, console_host
 
 
 async def run(args: argparse.Namespace) -> None:
@@ -16,6 +18,9 @@ async def run(args: argparse.Namespace) -> None:
         udp_reads=getattr(args, "udp_reads", False),
         auto_reconnect=getattr(args, "auto_reconnect", False),
     )
+    if args.command == "serial":
+        await run_serial(args, token)
+        return
     if args.command == "wait-ready":
         try:
             print(json.dumps(await box.wait_ready(timeout=args.timeout, usb=not args.network_only)))
@@ -23,7 +28,10 @@ async def run(args: argparse.Namespace) -> None:
             await box.close()
         return
     async with box:
-        if args.command in ("status", "connect"):
+        if args.command == "bootsel":
+            await box.reboot_to_bootsel()
+            print("Rebooting into BOOTSEL; the device leaves the network.")
+        elif args.command in ("status", "connect"):
             print(json.dumps(await box.status()))
         elif args.command == "type":
             await box.keyboard.type(args.text, delay_ms=getattr(args, "delay", 0))
@@ -69,6 +77,25 @@ async def run(args: argparse.Namespace) -> None:
             print("Target ejected; media synchronized.")
 
 
+async def run_serial(args: argparse.Namespace, token: str) -> None:
+    """Print target console output; optionally send one line (or raw bytes) first."""
+    async with SerialConsole(console_host(args.url), token, port=args.port) as console:
+        if args.send is not None:
+            text = args.send.encode()
+            await console.write(text if args.raw else text + b"\r")
+        loop = asyncio.get_running_loop()
+        end = None if args.seconds is None else loop.time() + args.seconds
+        out = sys.stdout.buffer
+        while end is None or loop.time() < end:
+            wait = None if end is None else max(0.0, end - loop.time())
+            try:
+                data = await asyncio.wait_for(console.read(), wait)
+            except TimeoutError:
+                break
+            out.write(data)
+            out.flush()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="pico-devbox")
     p.add_argument("--url", default=os.environ.get("PICO_URL", "ws://picousb.local:8080/ws"))
@@ -80,6 +107,12 @@ def main() -> None:
     )
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
+    sub.add_parser("bootsel", help="Reboot into the ROM USB bootloader for flashing")
+    serial = sub.add_parser("serial", help="Target console over the Pico's GPIO UART")
+    serial.add_argument("--port", type=int, default=DEFAULT_PORT)
+    serial.add_argument("--send", metavar="TEXT", help="Send TEXT plus CR before reading")
+    serial.add_argument("--raw", action="store_true", help="Send TEXT verbatim, no CR")
+    serial.add_argument("--seconds", type=float, help="Stop reading after this long")
     sub.add_parser("connect")
     ready = sub.add_parser("wait-ready")
     ready.add_argument("--timeout", type=float, default=30)

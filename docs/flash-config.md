@@ -34,5 +34,11 @@ Configuration UF2 uses the RP2350 ARM secure family ID `0xe48bff59`, sixteen
 ignored absolute-family RP2350-E10 workaround block. It is preserved separately
 when combining firmware and config; ARM-family sequence counts exclude it. Generated `.bin` and
 `.uf2` files are private ignored artifacts; do not upload or inspect them in an
-agent session. Firmware-only UF2 updates preserve the reserved sector; a full
-flash erase does not.
+agent session. Firmware-only UF2 updates preserve the reserved sector only once
+`tools/firmware_uf2.py strip` has removed picotool's E10 block (`build.sh` does
+this and `flash.sh` checks it). That block is addressed to 0x10ffff00. Without a
+partition table the bootrom assumes 16 MiB of flash and writes it; on this 4 MiB
+part it wraps onto 0x3fff00 and erases the reserved sector. A firmware UF2 dragged
+on unstripped deprovisioned the board on 2026-09-27. The config UF2 survives its
+own copy of the block, because its data blocks rewrite the sector afterwards. A
+full flash erase does not preserve the sector either.

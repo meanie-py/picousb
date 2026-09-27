@@ -38,6 +38,7 @@ class Op(IntEnum):
     WRITE = 41
     FLUSH = 42
     EJECT = 43
+    BOOTSEL = 50
 
 
 class DevBoxError(Exception):

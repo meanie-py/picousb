@@ -24,6 +24,10 @@ case "$part" in
   *) echo 'Invalid part.' >&2; exit 2 ;;
 esac
 test -f "$source" || { echo 'Build artifact missing.' >&2; exit 1; }
+if [[ "$part" == Firmware ]]; then
+  # A firmware UF2 must never reach the reserved sector (tools/firmware_uf2.py).
+  "$python_bin" tools/firmware_uf2.py check "$source"
+fi
 if [[ -n "$mount_path" ]]; then
   test -f "$mount_path/INFO_UF2.TXT" || { echo 'BOOTSEL mount unavailable.' >&2; exit 1; }
   # Validate the requested destination, not an arbitrary mounted filesystem.

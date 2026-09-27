@@ -62,6 +62,7 @@ not roll back completed writes or input already delivered to the USB host.
 | 6 | USB telemetry | A=B=0, empty payload | 156-byte versioned payload below |
 | 7 | raw HID input | A=HID instance 0/1/2, B=0, payload 8/5/5 bytes | input fence |
 | 8 | absolute pointer | A=X, B=Y, each 0..32767; payload one button-mask byte 0..7 | input fence |
+| 50 | reboot to BOOTSEL | A=B=0, empty payload | empty; ~200 ms later the device resets into the ROM USB bootloader and leaves the network |
 
 When no DEVICE_TOKEN was provisioned, authenticate with an empty payload.
 Authenticated operations require the returned session. Neither token nor Wi-Fi
@@ -325,3 +326,32 @@ media offline. Incomplete reads time out under the existing five-second firmware
 deadline. Host retry exhaustion closes the session; there is no silent transport
 fallback. Disconnect revokes the cookie and media; stale packets cannot complete
 a later request. UDP does not change persistence guarantees or add write caching.
+
+## Serial console (TCP 8082)
+
+The target console is a raw TCP stream on port 8082, independent of the WebSocket
+session so a capture can stay attached while control clients come and go. The
+Pico's UART0 (GP0 TX to the target's RXD, GP1 RX from its TXD, 115200 8N1; all
+configurable at build time) is the wire; firmware diagnostics use UART1 (GP4/GP5)
+so they never reach the target.
+
+The client's first line authenticates: `PICOSERIAL 1 <DEVICE_TOKEN>\n`, or
+`PICOSERIAL 1\n` when no token is provisioned. The token is compared in constant
+time; any mismatch, an overlong line, or no line within 5 s closes the connection.
+The reply is `OK\n`, after which every byte is console data in both directions.
+
+- One client is served. A newly authenticated client replaces the previous one,
+  so a capture that lost Wi-Fi without a FIN cannot lock the console out. One
+  connection may be authenticating at a time; TCP keepalive (5 s idle, 3 probes
+  2 s apart) reaps dead peers.
+- Target output is kept in a 128 KiB ring while no client is attached. When it
+  wraps, the oldest bytes are dropped and the stream carries
+  `\r\n[picousb: N console bytes lost]\r\n` where the gap was.
+- Client input is queued (4 KiB) and written to the UART without flow control;
+  the pacing a slow target needs is the client's job. When the queue is full the
+  device stops acknowledging TCP data rather than dropping it.
+- Framing and break errors are discarded as line noise from target power changes.
+- The Pico may be powered from VSYS while the target is off. TX and the RX pull-up
+  would then back-feed the unpowered target through its pin protection diodes, so
+  while VBUS (WL_GPIO2, the target's USB power) is absent TX is released and both
+  pins are pulled down; input sent meanwhile is discarded.

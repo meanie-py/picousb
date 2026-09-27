@@ -108,6 +108,26 @@ unverified. Test image and manifests are retained only in ignored `build/image-t
 - [x] Sustained file transfers measured with hashes and elapsed time; characterize throughput.
 - [ ] Repeat storage operations on a conventional OS and on the developing target OS.
 
+## Serial console and remote reflash (2026-09-27, Pi 4B target)
+
+Wiring: Pi pin 8 (TXD) -> Pico GP1, Pi pin 10 (RXD) <- Pico GP0, GND <-> GND.
+The Pico's USB was on the Windows host (so VBUS was always present); the
+target-power gating of the console pins was NOT exercised on the Pi's USB port.
+
+- [x] RX: a full Pi 4B power-on (EEPROM bootloader, start4.elf, UEFI) arrived on
+      TCP 8082: 4235 bytes received = 4235 delivered, 0 dropped, 0 framing errors.
+- [x] TX: `tools/pi4/netboot.sh --shell` (vibeos) reached the UEFI Shell through the
+      console, and `ver` round-tripped.
+- [x] Wiring fault is diagnosable: with GP0/GP1 swapped, `console_rx` on the
+      diagnostic UART stayed at `bytes: 0` through a full target boot.
+- [x] `pico-devbox bootsel` reboots into the ROM bootloader over Wi-Fi; the BOOTSEL
+      volume appeared 2 s later with no button press.
+- [x] A firmware-only drag-and-drop update left the config sector intact once
+      `tools/firmware_uf2.py strip` removed picotool's E10 block. Before that, the
+      same update left `config_invalid` and needed the Config part re-flashed.
+- [ ] Console pins go passive when the target's USB power drops (needs the Pico's
+      USB on the Pi).
+
 Do not inject test keyboard input into an unattended host desktop. Use a known
 target/editor and intentional test content. USB tests on this workstation can
 enumerate interfaces and exercise storage without sending HID input.
