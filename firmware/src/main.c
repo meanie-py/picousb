@@ -72,9 +72,11 @@ int main(void) {
         }
     }
 #endif
-    netif_set_hostname(&cyw43_state.netif[0], "picousb");
+    /* lwIP keeps the pointer; config lives for the whole of main. */
+    const char *hostname = config.hostname[0] ? config.hostname : DB_DEFAULT_HOSTNAME;
+    netif_set_hostname(&cyw43_state.netif[0], hostname);
     mdns_resp_init();
-    mdns_resp_add_netif(&cyw43_state.netif[0], "picousb");
+    mdns_resp_add_netif(&cyw43_state.netif[0], hostname);
     if (!network_start() || !serial_start()) {
         printf("{\"event\":\"server_failed\"}\n");
         while (true) {

@@ -41,6 +41,7 @@ static void config_test(void) {
     assert(db_config_read(&c, b, sizeof(b)));
     assert(!strcmp(c.ssid, "test"));
     assert(!strcmp(c.token, "synthetic-test-token"));
+    assert(!c.hostname[0]);
     for (size_t i = 0; i < 16 + n; i++) {
         b[i] ^= 1;
         assert(!db_config_read(&c, b, sizeof(b)));
@@ -48,6 +49,25 @@ static void config_test(void) {
     }
     assert(!db_config_read(&c, b, 4095));
     assert(db_crc32((const uint8_t *)"123456789", 9) == 0xcbf43926);
+    /* HOSTNAME: optional, DNS-label characters only. */
+    const char *names[] = {"picousb5", "a", "pico-2", "Pico", "-pico", "pico-", "pi_co", ""};
+    const bool valid[] = {true, true, true, false, false, false, false, false};
+    for (unsigned k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+        char rec[128];
+        int rn = snprintf(rec, sizeof(rec), "WIFI_SSID=test%cWIFI_PASSWORD=synthetic%cHOSTNAME=%s%c",
+                          0, 0, names[k], 0);
+        memset(b, 255, sizeof(b));
+        memcpy(b, "PICOUSB\0", 8);
+        b[8] = 1;
+        b[9] = 0;
+        b[10] = (uint8_t)rn;
+        b[11] = 0;
+        memcpy(b + 16, rec, (size_t)rn);
+        put32(b + 12, db_crc32(b + 16, (size_t)rn));
+        assert(db_config_read(&c, b, sizeof(b)) == valid[k]);
+        if (valid[k])
+            assert(!strcmp(c.hostname, names[k]));
+    }
 }
 static void hid_test(void) {
     db_hid h = {0};

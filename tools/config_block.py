@@ -43,6 +43,11 @@ def validate(values: dict[str, str]) -> None:
             raise ConfigError("missing or invalid Wi-Fi configuration")
     if "DEVICE_TOKEN" in values and not 16 <= len(values["DEVICE_TOKEN"].encode()) <= 128:
         raise ConfigError("invalid device token length")
+    # Optional; a second bench Pico needs its own DHCP/mDNS name (firmware default: picousb).
+    if "HOSTNAME" in values and not re.fullmatch(
+        r"[a-z0-9](?:[a-z0-9-]{0,30}[a-z0-9])?", values["HOSTNAME"]
+    ):
+        raise ConfigError("invalid HOSTNAME (1-32 of a-z 0-9 -, no leading/trailing -)")
 
 
 def encode(values: dict[str, str]) -> bytes:

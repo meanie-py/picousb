@@ -10,6 +10,7 @@
 #define DB_MAX (DB_HEADER + DB_PAYLOAD)
 #define DB_SECTORS 65536u
 #define DB_REPORTS 256
+#define DB_DEFAULT_HOSTNAME "picousb"
 enum { DB_OK, DB_PROTOCOL, DB_AUTH, DB_LIMIT, DB_BUSY, DB_OFFLINE, DB_IO, DB_TIMEOUT, DB_ARGUMENT };
 enum {
     DB_AUTH_OP = 1,
@@ -42,6 +43,7 @@ enum {
 };
 typedef struct {
     char ssid[33], password[64], token[129];
+    char hostname[33]; /* DHCP/mDNS name; empty = DB_DEFAULT_HOSTNAME */
 } db_config;
 typedef struct {
     uint8_t op, status;

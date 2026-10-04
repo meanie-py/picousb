@@ -27,7 +27,7 @@ bool db_config_read(db_config *out, const uint8_t *p, size_t n) {
     size_t len = u16(p + 10);
     if (!len || len > 4080 || p[16 + len - 1] || db_crc32(p + 16, len) != u32(p + 12))
         return false;
-    bool ssid = false, pw = false, token = false;
+    bool ssid = false, pw = false, token = false, hostname = false;
     for (size_t i = 16; i < 16 + len;) {
         size_t end = i;
         while (end < 16 + len && p[end])
@@ -60,6 +60,16 @@ bool db_config_read(db_config *out, const uint8_t *p, size_t n) {
             dst = out->token;
             max = 128;
             seen = &token;
+        }
+        if (eq - i == 8 && !memcmp(p + i, "HOSTNAME", 8)) {
+            /* A second bench Pico needs its own name; DNS label rules. */
+            for (size_t j = 0; j < vlen; j++)
+                if (!((v[j] >= 'a' && v[j] <= 'z') || (v[j] >= '0' && v[j] <= '9') ||
+                      (v[j] == '-' && j && j + 1 < vlen)))
+                    return false;
+            dst = out->hostname;
+            max = 32;
+            seen = &hostname;
         }
         if (dst) {
             if (*seen || !vlen || vlen > max)

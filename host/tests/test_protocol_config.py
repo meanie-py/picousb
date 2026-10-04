@@ -96,6 +96,29 @@ def test_invalid_env(text: str) -> None:
         config.parse_env(text)
 
 
+@pytest.mark.parametrize(
+    ("name", "ok"),
+    [
+        ("picousb5", True),
+        ("a", True),
+        ("pico-2", True),
+        ("Pico", False),
+        ("-pico", False),
+        ("pico-", False),
+        ("pi_co", False),
+        ("", False),
+        ("a" * 33, False),
+    ],
+)
+def test_hostname(name: str, ok: bool) -> None:
+    text = f"WIFI_SSID=test\nWIFI_PASSWORD=synthetic\nHOSTNAME={name}"
+    if ok:
+        assert config.parse_env(text)["HOSTNAME"] == name
+    else:
+        with pytest.raises(config.ConfigError):
+            config.parse_env(text)
+
+
 def test_config_capacity() -> None:
     v = values()
     v["EXTRA"] = "x" * 4096
