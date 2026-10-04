@@ -62,6 +62,7 @@ not roll back completed writes or input already delivered to the USB host.
 | 6 | USB telemetry | A=B=0, empty payload | 156-byte versioned payload below |
 | 7 | raw HID input | A=HID instance 0/1/2, B=0, payload 8/5/5 bytes | input fence |
 | 8 | absolute pointer | A=X, B=Y, each 0..32767; payload one button-mask byte 0..7 | input fence |
+| 9 | console status | A=B=0, empty payload | 32 bytes, eight u32: layout version 1, target powered (VBUS), client attached, RX line level, RX bytes, RX framing/break errors, bytes dropped from the ring, TX bytes queued |
 | 50 | reboot to BOOTSEL | A=B=0, empty payload | empty; ~200 ms later the device resets into the ROM USB bootloader and leaves the network |
 
 When no DEVICE_TOKEN was provisioned, authenticate with an empty payload.

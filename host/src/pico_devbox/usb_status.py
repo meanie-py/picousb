@@ -71,3 +71,25 @@ class USBStatus:
             words[8] or None,
             tuple(interfaces),
         )
+
+
+@dataclass(frozen=True)
+class ConsoleStatus:
+    """The GPIO UART bridge to the target console (protocol op 9)."""
+
+    target_powered: bool
+    client_attached: bool
+    rx_level: int
+    rx_bytes: int
+    rx_errors: int
+    dropped: int
+    tx_queued: int
+
+    @classmethod
+    def decode(cls, data: bytes) -> "ConsoleStatus":
+        if len(data) != 32:
+            raise DevBoxError(1, "console telemetry requires updated firmware")
+        version, powered, client, level, rx, errors, dropped, queued = struct.unpack("<8I", data)
+        if version != 1 or powered > 1 or client > 1 or level > 1:
+            raise DevBoxError(1, "invalid console telemetry")
+        return cls(bool(powered), bool(client), level, rx, errors, dropped, queued)

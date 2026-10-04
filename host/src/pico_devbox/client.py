@@ -16,7 +16,7 @@ from .image import ImageDisk
 from .protocol import HEADER, MAX_PAYLOAD, RESPONSE, SECTORS, DevBoxError, Message, Op
 from .storage import DirectoryDisk
 from .udp_reads import UDPReads
-from .usb_status import USBStatus
+from .usb_status import ConsoleStatus, USBStatus
 
 KEYS = {
     "ENTER": 40,
@@ -435,7 +435,18 @@ class DevBox:
             "queued_reports": reply.b,
             "session": self.session,
             "usb": asdict(await self.usb_status()),
+            "console": await self._console_or_none(),
         }
+
+    async def console_status(self) -> ConsoleStatus:
+        return ConsoleStatus.decode((await self.request(Op.CONSOLE_STATUS)).payload)
+
+    async def _console_or_none(self) -> dict[str, object] | None:
+        # Firmware older than the serial bridge answers op 9 with an error.
+        try:
+            return asdict(await self.console_status())
+        except DevBoxError:
+            return None
 
     async def reboot_to_bootsel(self) -> None:
         """Reboot into the ROM USB bootloader for a firmware update; the session ends."""

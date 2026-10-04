@@ -253,4 +253,13 @@ void serial_tick(uint32_t now, bool radio) {
         drop(&pending);
     forward();
     report(now);
+    device.console = (db_console){
+        .target_powered = target_powered,
+        .client = client != NULL,
+        .rx_level = (uint8_t)gpio_get(PICOUSB_CONSOLE_RX_PIN),
+        .rx_bytes = bridge.head,
+        .rx_errors = rx_errors,
+        .dropped = bridge.dropped,
+        .tx_queued = bridge.tx_count,
+    };
 }

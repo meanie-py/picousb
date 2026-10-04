@@ -20,6 +20,7 @@ enum {
     DB_USB_STATUS = 6,
     DB_RAW_REPORT = 7,
     DB_POINTER = 8,
+    DB_CONSOLE_STATUS = 9,
     DB_KEY_DOWN = 10,
     DB_KEY_UP,
     DB_KEY_PRESS,
@@ -70,12 +71,19 @@ typedef struct {
     uint32_t idle[3], protocol[3], protocol_value[3];
     uint32_t completed[3], last_ms[3];
 } db_usb_status;
+/* Target serial console counters, refreshed by the UART bridge each tick. */
+typedef struct {
+    bool target_powered, client;
+    uint8_t rx_level;
+    uint32_t rx_bytes, rx_errors, dropped, tx_queued;
+} db_console;
 typedef bool (*db_send_fn)(void *, const uint8_t *, size_t);
 typedef void (*db_complete_fn)(void *, bool, const uint8_t *, size_t);
 typedef struct {
     db_config config;
     db_hid hid;
     db_usb_status usb;
+    db_console console;
     db_send_fn send;
     db_complete_fn complete;
     void *ctx;

@@ -135,6 +135,14 @@ static void protocol_test(void) {
     assert(!d.pending && completions == 2);
     d.media = true;
     assert(db_storage_begin(&d, DB_READ, 0, NULL, 0));
+    d.console = (db_console){.target_powered = true, .client = true, .rx_level = 1,
+                             .rx_bytes = 4235, .rx_errors = 1, .dropped = 7, .tx_queued = 3};
+    m = (db_message){.op = DB_CONSOLE_STATUS, .id = 29, .session = d.session};
+    n = db_encode(b, &m);
+    assert(db_receive(&d, b, n));
+    assert(db_decode(&r, sent, sent_n) && r.status == DB_OK && r.length == 32);
+    assert(r.data[0] == 1 && r.data[4] == 1 && r.data[8] == 1 && r.data[12] == 1);
+    assert(r.data[16] == (4235 & 0xff) && r.data[17] == (4235 >> 8) && r.data[24] == 7);
     m = (db_message){.op = DB_BOOTSEL, .id = 30, .session = d.session, .a = 1};
     n = db_encode(b, &m);
     assert(db_receive(&d, b, n));

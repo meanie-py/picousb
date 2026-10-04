@@ -414,6 +414,20 @@ bool db_receive(db_device *d, const uint8_t *p, size_t n) {
         r.b = d->hid.count;
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
+    } else if (m.op == DB_CONSOLE_STATUS) {
+        if (m.length || m.a || m.b)
+            r.status = DB_ARGUMENT;
+        else {
+            uint8_t out[32];
+            uint32_t words[8] = {1, d->console.target_powered, d->console.client,
+                                 d->console.rx_level, d->console.rx_bytes, d->console.rx_errors,
+                                 d->console.dropped, d->console.tx_queued};
+            for (unsigned i = 0; i < 8; i++)
+                put32(out + i * 4, words[i]);
+            r.data = out;
+            r.length = sizeof(out);
+            return send_message(d, &r);
+        }
     } else if (m.op == DB_BOOTSEL) {
         if (m.length || m.a || m.b)
             r.status = DB_ARGUMENT;
