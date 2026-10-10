@@ -131,3 +131,18 @@ target-power gating of the console pins was NOT exercised on the Pi's USB port.
 Do not inject test keyboard input into an unattended host desktop. Use a known
 target/editor and intentional test content. USB tests on this workstation can
 enumerate interfaces and exercise storage without sending HID input.
+
+## Boot-protocol keyboard under a BIOS (2026-10-09, OptiPlex 9020 target)
+
+Target: Dell OptiPlex 9020 SFF, Libreboot 25.06, SeaBIOS payload, Ventoy 1.1.16
+legacy menu; the Pico on a rear USB port, flashed from Linux on the same target
+(BOOTSEL over Wi-Fi, UF2 copied to the RP2350 volume; configuration survived).
+
+- Before `0f43f4f`: SeaBIOS put the keyboard in boot protocol and read it, but
+  never the mouse or the absolute pointer. From the second control session on,
+  no key reached the menu (Down, F1, ESC at POST), and `pico-devbox key` exited
+  `host_not_polling`. Cause: each session reset queued a mouse release that
+  never completed and then blocked the single HID FIFO.
+- After: Up and Down move Ventoy's highlight in both directions, each `key`
+  command exits 0, across several sessions. Linux on the same target still reads
+  all three interfaces.
