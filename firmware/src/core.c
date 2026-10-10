@@ -133,18 +133,46 @@ void db_hid_pop(db_hid *h) {
         h->count--;
     }
 }
+bool db_hid_next(const db_hid *h, const bool busy[3], db_report *r, uint16_t *slot) {
+    for (uint16_t i = 0; i < h->count; i++) {
+        uint16_t at = (uint16_t)((h->head + i) % DB_REPORTS);
+        if (h->queue[at].kind < 3 && busy[h->queue[at].kind])
+            continue;
+        *r = h->queue[at];
+        *slot = i;
+        return true;
+    }
+    return false;
+}
+void db_hid_remove(db_hid *h, uint16_t slot) {
+    if (slot >= h->count)
+        return;
+    for (uint16_t i = slot; i + 1 < h->count; i++)
+        h->queue[(h->head + i) % DB_REPORTS] = h->queue[(h->head + i + 1) % DB_REPORTS];
+    h->count--;
+}
+/* Queue a "nothing pressed" report for each interface the host reads, so a
+ * session that dies mid-press leaves nothing held. An interface the host has
+ * never polled (a BIOS reads only the boot keyboard) holds nothing, and a report
+ * queued for it would never complete and would stall every HID fence. */
 void db_hid_reset(db_hid *h) {
     uint32_t epoch = h->epoch + 1;
-    bool pointer_seen = h->pointer_seen;
+    bool pointer_seen = h->pointer_seen, polled[3];
+    memcpy(polled, h->polled, sizeof(polled));
     uint8_t pointer[5]; memcpy(pointer, h->pointer, 5); pointer[0] = 0;
     memset(h, 0, sizeof(*h));
     h->epoch = epoch;
+    memcpy(h->polled, polled, sizeof(polled));
     report(h, 0, 0, 0, 0);
-    report(h, 1, 0, 0, 0);
+    if (polled[1])
+        report(h, 1, 0, 0, 0);
     if (pointer_seen) {
         h->pointer_seen = true; memcpy(h->pointer, pointer, 5);
-        report(h, 2, 0, 0, 0);
-        h->queue[2].length = 5; memcpy(h->queue[2].raw, pointer, 5);
+        if (polled[2]) {
+            report(h, 2, 0, 0, 0);
+            db_report *r = &h->queue[(h->head + h->count - 1) % DB_REPORTS];
+            r->length = 5; memcpy(r->raw, pointer, 5);
+        }
     }
 }
 bool db_ascii(uint8_t ch, uint8_t *key, uint8_t *mod) {

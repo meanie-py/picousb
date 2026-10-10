@@ -97,8 +97,9 @@ static void hid_test(void) {
     assert(!db_ascii(128, &key, &mod));
     m = (db_message){.op = DB_KEY_TEXT, .data = (uint8_t *)"aA!\n", .length = 4};
     assert(!db_hid_command(&h, &m));
-    assert(h.count == 10);
-    assert(h.queue[4].modifiers == 2);
+    /* The reset queued only the keyboard's release: nothing has polled the mouse. */
+    assert(h.count == 9);
+    assert(h.queue[3].modifiers == 2);
     m.data = (uint8_t *)"\x80";
     m.length = 1;
     unsigned before = h.count;

@@ -120,10 +120,19 @@ void usb_reports(void) {
     device.usb.mounted = tud_mounted();
     device.usb.suspended = tud_suspended();
     db_report r;
-    if (!db_hid_peek(&device.hid, &r) || !tud_hid_n_ready(r.kind))
+    uint16_t slot;
+    /* Each interface is its own pipe: a report waiting on an endpoint the host
+     * does not poll must not hold back the others (a BIOS polls only the boot
+     * keyboard, and one stuck mouse report used to block every key). */
+    bool busy[3];
+    for (unsigned i = 0; i < 3; i++) busy[i] = hid_pending[i] || !tud_hid_n_ready((uint8_t)i);
+    if (!db_hid_next(&device.hid, busy, &r, &slot))
         return;
+    if (r.kind >= 3) {
+        db_hid_remove(&device.hid, slot);
+        return;
+    }
     uint8_t mouse[5] = {r.buttons, (uint8_t)r.x, (uint8_t)r.y, (uint8_t)r.wheel, 0};
-    if (r.kind >= 3 || hid_pending[r.kind]) return;
     bool ok = r.length ? tud_hid_n_report(r.kind, 0, r.raw,
                          r.kind == 1 && tud_hid_n_get_protocol(1) == HID_PROTOCOL_BOOT ? 3 : r.length)
               : r.kind ? tud_hid_n_report(1, 0, mouse,
@@ -133,13 +142,14 @@ void usb_reports(void) {
         hid_pending[r.kind] = true;
         hid_epoch[r.kind] = device.hid.epoch;
         device.hid.counts[r.kind].submitted++;
-        db_hid_pop(&device.hid);
+        db_hid_remove(&device.hid, slot);
     }
 }
 void tud_hid_report_complete_cb(uint8_t instance, const uint8_t *report, uint16_t len) {
     (void)report; (void)len;
     if (instance >= 3 || !hid_pending[instance]) return;
     hid_pending[instance] = false;
+    device.hid.polled[instance] = true;
     device.usb.completed[instance]++;
     device.usb.last_ms[instance] = to_ms_since_boot(get_absolute_time());
     if (hid_epoch[instance] != device.hid.epoch) return;
@@ -169,6 +179,7 @@ void tud_picousb_bus_reset_cb(void) {
     device.usb.mounted = device.usb.suspended = false;
     memset(hid_pending, 0, sizeof(hid_pending));
     for (unsigned i = 0; i < 3; i++) device.usb.protocol_value[i] = HID_PROTOCOL_REPORT;
+    memset(device.hid.polled, 0, sizeof(device.hid.polled));
     db_hid_reset(&device.hid);
 }
 void tud_msc_inquiry_cb(uint8_t lun, uint8_t vendor[8], uint8_t product[16], uint8_t rev[4]) {
@@ -296,6 +307,7 @@ void tud_msc_abort_cb(void) {
 void tud_umount_cb(void) {
     device.usb.mounted = false;
     memset(hid_pending, 0, sizeof(hid_pending));
+    memset(device.hid.polled, 0, sizeof(device.hid.polled));
     tud_msc_abort_cb();
     db_hid_reset(&device.hid);
 }

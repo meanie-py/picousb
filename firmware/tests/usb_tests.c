@@ -8,6 +8,7 @@ static bool ready = true;
 static uint8_t protocol = HID_PROTOCOL_REPORT, sense;
 static unsigned reports, completions;
 static uint16_t report_length;
+static uint8_t last_instance;
 static int32_t last_complete;
 void tud_hid_report_complete_cb(uint8_t, const uint8_t *, uint16_t);
 void tud_picousb_bus_reset_cb(void);
@@ -26,8 +27,8 @@ uint8_t tud_hid_n_get_protocol(uint8_t i) {
     return protocol;
 }
 bool tud_hid_n_report(uint8_t i, uint8_t id, const void *p, uint16_t n) {
-    (void)i;
     (void)id;
+    last_instance = i;
     (void)p;
     reports++;
     report_length = n;
@@ -89,6 +90,7 @@ static int32_t scsi_request(uint8_t lun, const uint8_t *cmd, void *buffer, uint1
 int main(void) {
     db_config c = {0};
     db_init(&device, &c, send, usb_complete, NULL);
+    device.hid.polled[0] = device.hid.polled[1] = true;
     db_hid_reset(&device.hid);
     ready = false;
     usb_reports();
@@ -189,6 +191,9 @@ int main(void) {
     assert(tud_hid_set_idle_cb(1, 0)); tud_hid_set_protocol_cb(1, 0);
     assert(device.usb.idle[1] == 1 && device.usb.protocol[1] == 1 && !device.usb.protocol_value[1]);
     assert(!tud_hid_set_idle_cb(3, 0));
+    /* A host that polls the mouse too, so a reset releases it as well. */
+    db_message nudge = {.op = DB_MOUSE_MOVE, .a = 1};
+    assert(db_hid_command(&device.hid, &nudge) == DB_OK);
     while (device.hid.count) { usb_reports(); tud_hid_report_complete_cb(0,NULL,8); tud_hid_report_complete_cb(1,NULL,5); }
     uint8_t button = 1;
     db_message pointer = {.op=DB_POINTER, .a=32767, .b=1234, .length=1, .data=&button};
@@ -207,5 +212,27 @@ int main(void) {
     db_message report = {.op=DB_RAW_REPORT, .length=8, .data=raw};
     assert(db_hid_command(&device.hid,&report)==DB_OK && device.hid.modifiers==2);
     raw[1]=1; assert(db_hid_command(&device.hid,&report)==DB_ARGUMENT);
+    /* A BIOS polls only the boot keyboard. No release is queued for an interface
+     * the host never read, and a report stuck on one interface does not hold back
+     * another: one unread mouse report used to block every key behind it. */
+    tud_picousb_bus_reset_cb();
+    assert(device.hid.count == 1 && device.hid.queue[device.hid.head].kind == 0);
+    assert(!device.hid.counts[1].accepted && !device.hid.counts[2].accepted);
+    usb_reports(); assert(last_instance == 0);
+    tud_hid_report_complete_cb(0, NULL, 8);
+    db_message move = {.op = DB_MOUSE_MOVE, .a = 1};
+    assert(db_hid_command(&device.hid, &move) == DB_OK);
+    usb_reports(); assert(last_instance == 1);
+    assert(db_hid_command(&device.hid, &move) == DB_OK);
+    db_message key = {.op = DB_KEY_PRESS, .a = 0x51};
+    assert(db_hid_command(&device.hid, &key) == DB_OK);
+    usb_reports(); assert(last_instance == 0);
+    tud_hid_report_complete_cb(0, NULL, 8);
+    usb_reports(); assert(last_instance == 0);
+    tud_hid_report_complete_cb(0, NULL, 8);
+    assert(device.hid.counts[0].completed == 3 && device.hid.count == 1);
+    assert(device.hid.queue[device.hid.head].kind == 1);
+    db_hid_reset(&device.hid);
+    assert(device.hid.count == 1 && device.hid.queue[device.hid.head].kind == 0);
     return 0;
 }

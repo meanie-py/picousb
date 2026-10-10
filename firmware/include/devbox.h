@@ -66,6 +66,9 @@ typedef struct {
     db_hid_counts counts[3];
     uint8_t pointer[5];
     bool pointer_seen;
+    /* The host has completed a report on this interface since USB came up.
+     * Survives db_hid_reset; the USB adapter clears it on bus reset/unmount. */
+    bool polled[3];
 } db_hid;
 typedef struct {
     bool mounted, suspended;
@@ -114,6 +117,11 @@ bool db_ascii(uint8_t, uint8_t *, uint8_t *);
 int db_hid_command(db_hid *, const db_message *);
 bool db_hid_peek(const db_hid *, db_report *);
 void db_hid_pop(db_hid *);
+/* The oldest queued report whose interface is not busy[kind], and its slot for
+ * db_hid_remove. Reports of one interface stay in order; a busy one (say a mouse
+ * the host never polls) no longer holds back the others. */
+bool db_hid_next(const db_hid *, const bool busy[3], db_report *, uint16_t *slot);
+void db_hid_remove(db_hid *, uint16_t slot);
 void db_hid_reset(db_hid *);
 void db_init(db_device *, const db_config *, db_send_fn, db_complete_fn, void *);
 void db_connect(db_device *);
